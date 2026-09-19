@@ -45,13 +45,16 @@ zhifangsi map [目标路径]
 # 2. 提取代码高信息密度骨架 (剥离函数体，保留接口与签名，降噪 85%+)
 zhifangsi skeleton [目标路径] [输出文件.md]
 
-# 3. 探测与 LLM Wiki 桌面端的桥接状态
+# 3. 执行关防守则与架构不变量合规巡检 (阻断跨层越权与非法依赖)
+zhifangsi check [目标路径]
+
+# 4. 探测与 LLM Wiki 桌面端的桥接状态
 zhifangsi bridge
 
-# 4. 将本地 wiki 页面增量同步给 LLM Wiki 桌面端建立向量索引
+# 5. 将本地 wiki 页面增量同步给 LLM Wiki 桌面端建立向量索引
 zhifangsi sync [目标路径]
 
-# 5. 启动标准 stdio MCP 服务
+# 6. 启动标准 stdio MCP 服务
 zhifangsi mcp
 ```
 
@@ -59,7 +62,8 @@ zhifangsi mcp
 
 ## 三、 MCP 工具清单 (面向 AI Agent)
 
-- **`zhifangsi_map`**：获取全库模块、工作流、不变量与 ADR 战略总图。
+- **`zhifangsi_map`**：获取全库模块、工作流、不变量与 ADR 战略总图及健康状态。
+- **`zhifangsi_check_invariants`**：对代码库执行关防守则合规巡检，扫描越权调用、非法依赖与单向数据流违规。
 - **`zhifangsi_module_info`**：查询特定模块的职责、导出 API 与双链拓扑。
 - **`zhifangsi_workflow_trace`**：追踪特定业务流的端到端调用时序与阶段步骤。
 - **`zhifangsi_search`**：混合语义检索（自动优先借力桌面端向量库）。

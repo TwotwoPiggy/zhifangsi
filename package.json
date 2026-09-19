@@ -17,7 +17,8 @@
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "start": "node ./bin/zhifangsi.mjs"
+    "start": "node ./bin/zhifangsi.mjs",
+    "install:antigravity": "node ./scripts/install-antigravity.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0"
