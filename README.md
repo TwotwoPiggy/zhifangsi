@@ -24,6 +24,9 @@
 └───────────────────┴────────────────────┴───────────────────────────────┘
 ```
 
+> 💡 **理论基石与思想渊源**：  
+> 职方司的知识层体系设计深度借鉴了 Andrej Karpathy 提出的 **[llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** 范式（Raw sources / The wiki / The schema），将代码库事实作为不可变源头，通过确定性 AST 与骨架提取化解大模型的薄记成本（Bookkeeping burden），建立起由 AI Agent 与开发者协同自愈的代码库战略认知舆图。
+
 ---
 
 ## 🌟 核心能力矩阵
@@ -52,7 +55,7 @@
 
 ### 5. 双模驱动（Dual Mode）
 - **单机独立模式 (Standalone)**：纯本地运行，零外部依赖，毫秒级 CLI 与 MCP 工具服务；
-- **LLM Wiki 联动模式 (Bridge Mode)**：自动探测桌面客户端（`127.0.0.1:19828`），赋予向量混合检索、知识图谱可视化画布与自动页面嵌入能力。
+- **LLM Wiki 联动模式 (Bridge Mode)**：深度联动践行 Andrej Karpathy 提出的 [llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 范式，自动探测桌面客户端（`127.0.0.1:19828`），赋予向量混合检索、知识图谱可视化画布与自动页面嵌入能力。
 
 ---
 
@@ -214,6 +217,13 @@ zhifangsi/
 ├── test/                     # 自动化测试套件 (Vitest)
 └── package.json
 ```
+
+---
+
+## 🔗 理论基石与参考
+
+- **[llm-wiki (Andrej Karpathy)](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** —— 探讨以 LLM 免除知识库簿记维护成本、实现 `Raw sources` / `The wiki` / `The schema` 三层自治体系的开创性思路。
+- **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)** —— 标准化 AI Agent 与研发工具链上下文交互规范。
 
 ---
 

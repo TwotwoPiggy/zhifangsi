@@ -28,7 +28,7 @@ description: >-
    - 适用于命令行快速分析与没有开启桌面端的情况。
 
 2. **LLM Wiki 桌面联动模式 (Bridge Mode)**：
-   - 自动探测后台运行的 LLM Wiki 桌面客户端（`http://127.0.0.1:19828`）；
+   - 自动探测后台运行的 [LLM Wiki (Karpathy)](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 桌面客户端（`http://127.0.0.1:19828`）；
    - 联动能力：
      - 将舆图同步至桌面端的 Sigma.js 知识图谱画布；
      - 借力 LanceDB 进行代码与业务意图的混合语义检索；
