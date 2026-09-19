@@ -1,0 +1,44 @@
+{
+  "name": "zhifangsi",
+  "version": "1.0.0",
+  "description": "职方司 (zhifangsi) - 基于三省六部体系的代码库战略舆图、关防守则与自愈架构引擎 (支持独立运行与 LLM Wiki 桌面端联动双模)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "zhifangsi": "./bin/zhifangsi.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TwotwoPiggy/zhifangsi.git"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node ./bin/zhifangsi.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
+  },
+  "keywords": [
+    "codebase-map",
+    "architecture",
+    "ast",
+    "dependency-graph",
+    "mcp",
+    "antigravity",
+    "qoder",
+    "llm-wiki",
+    "sansheng-liubu",
+    "yongle-dadian"
+  ],
+  "author": "Lemony & Antigravity",
+  "license": "MIT"
+}
