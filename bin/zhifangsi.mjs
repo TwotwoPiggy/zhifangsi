@@ -23,12 +23,17 @@ async function main() {
   switch (command) {
     case 'map': {
       const targetDir = path.resolve(args[1] || process.cwd())
+      const outFile = args[2] ? path.resolve(args[2]) : null
       console.log(`\x1b[36m[职方司]\x1b[0m 正在测绘代码库舆图: ${targetDir}...`)
       const bridge = new LLMWikiBridge()
       const bridgeOnline = await bridge.isAvailable()
       const graph = buildWorkspaceGraph(targetDir)
       const output = formatZhifangsiMap(targetDir, graph, bridgeOnline)
       console.log('\n' + output)
+      if (outFile) {
+        fs.writeFileSync(outFile, output, 'utf-8')
+        console.log(`\x1b[32m✔ 战略舆图已保存至:\x1b[0m ${outFile}`)
+      }
       break
     }
 
@@ -110,9 +115,9 @@ async function main() {
 版本: 1.0.0 (支持独立运行与 LLM Wiki 桌面联动双模)
 
 用法:
-  zhifangsi map [dir]          测绘并输出代码库拓扑、PageRank 核心关隘与模块列表
-  zhifangsi skeleton [dir]     提取高信息密度代码骨架 (85%+ 压缩率)
-  zhifangsi check [dir]        执行关防守则与架构不变量静态合规核查 (阻断越权与非法依赖)
+  zhifangsi map [dir] [outfile] 测绘并输出代码库拓扑、PageRank 核心关隘与模块列表 (可存盘)
+  zhifangsi skeleton [dir] [out] 提取高信息密度代码骨架 (85%+ 压缩率)
+  zhifangsi check [dir]         执行关防守则与架构不变量静态合规核查 (阻断越权与非法依赖)
   zhifangsi bridge             探测与 LLM Wiki 桌面端的联动状态
   zhifangsi sync [dir]         将本地架构页面同步至 LLM Wiki 桌面端嵌入索引
   zhifangsi mcp                启动 stdio MCP 服务 (供 Antigravity / Qoder / Copilot 调用)
