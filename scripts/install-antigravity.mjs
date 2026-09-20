@@ -42,19 +42,41 @@ if (!fs.existsSync(mcpServerScript)) {
   execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' })
 }
 
-// 1. 安装 Skill 技能
-console.log(`1. 正在同步 Antigravity 核心技能 (Skill)...`)
+// 1. 安装 Skill 技能（主技能与专项子技能）
+console.log(`1. 正在同步 Antigravity 技能组 (Skills)...`)
+const skillsBaseDir = path.join(geminiRoot, 'antigravity', 'skills')
+
 try {
-  fs.mkdirSync(skillsDir, { recursive: true })
-  const sourceSkill = path.join(projectRoot, 'SKILL.md')
-  const targetSkill = path.join(skillsDir, 'SKILL.md')
-  
-  if (fs.existsSync(sourceSkill)) {
-    fs.copyFileSync(sourceSkill, targetSkill)
-    console.log(`   \x1b[32m✔ 技能文件已部署:\x1b[0m ${targetSkill}`)
+  // 1.1 主技能 zhifangsi
+  const mainSkillDir = path.join(skillsBaseDir, 'zhifangsi')
+  fs.mkdirSync(mainSkillDir, { recursive: true })
+  const sourceMainSkill = path.join(projectRoot, 'SKILL.md')
+  const targetMainSkill = path.join(mainSkillDir, 'SKILL.md')
+  if (fs.existsSync(sourceMainSkill)) {
+    fs.copyFileSync(sourceMainSkill, targetMainSkill)
+    console.log(`   \x1b[32m✔ [主技能]\x1b[0m ${targetMainSkill} (/zhifangsi)`)
+  }
+
+  // 1.2 专项子技能 (zhifangsi-map, zhifangsi-check, zhifangsi-skeleton, zhifangsi-trace, zhifangsi-sync)
+  const skillsSourceFolder = path.join(projectRoot, 'skills')
+  if (fs.existsSync(skillsSourceFolder)) {
+    const subEntries = fs.readdirSync(skillsSourceFolder, { withFileTypes: true })
+    for (const entry of subEntries) {
+      if (entry.isDirectory()) {
+        const subSkillName = entry.name
+        const subSourceSkill = path.join(skillsSourceFolder, subSkillName, 'SKILL.md')
+        if (fs.existsSync(subSourceSkill)) {
+          const subTargetDir = path.join(skillsBaseDir, subSkillName)
+          fs.mkdirSync(subTargetDir, { recursive: true })
+          const subTargetSkill = path.join(subTargetDir, 'SKILL.md')
+          fs.copyFileSync(subSourceSkill, subTargetSkill)
+          console.log(`   \x1b[32m✔ [指令技能]\x1b[0m ${subTargetSkill} (/${subSkillName})`)
+        }
+      }
+    }
   }
 } catch (err) {
-  console.error(`   \x1b[31m✖ 部署 Skill 失败:\x1b[0m`, err)
+  console.error(`   \x1b[31m✖ 部署技能组失败:\x1b[0m`, err)
 }
 
 // 2. 注入 MCP Server 启动配置
