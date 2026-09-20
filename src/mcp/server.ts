@@ -13,6 +13,7 @@ import {
 } from '../invariants/checker.js'
 import * as fs from 'fs'
 import * as path from 'path'
+import { fileURLToPath } from 'url'
 
 export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
   const server = new Server(
@@ -275,4 +276,15 @@ export async function runZhifangsiMcpServer() {
   const server = createZhifangsiMcpServer()
   const transport = new StdioServerTransport()
   await server.connect(transport)
+}
+
+// 若作为直接入口脚本执行，则自动启动 MCP 服务
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+) {
+  runZhifangsiMcpServer().catch((err) => {
+    console.error('[Zhifangsi MCP Error]', err)
+    process.exit(1)
+  })
 }
