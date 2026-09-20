@@ -118,12 +118,16 @@ try {
   const toolDefinitions = [
     {
       name: 'zhifangsi_map',
-      description: '获取当前代码库的职方司全景战略舆图。包含基于 PageRank 的核心关隘文件（Hubs）、已注册模块、业务流和架构守则。',
+      description: '获取并生成当前代码库的职方司全景战略舆图。包含基于 PageRank 的核心关隘文件（Hubs）、已注册模块、业务流和架构守则，支持持久化保存为 Markdown 文件。',
       parameters: {
         type: 'object',
         properties: {
           target_dir: {
             description: '代码库根路径，缺省为当前工作目录',
+            type: 'string',
+          },
+          output_file: {
+            description: '可选，舆图 Markdown 保存文件路径，如 CODEBASE_MAP.md',
             type: 'string',
           },
         },

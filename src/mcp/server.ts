@@ -34,13 +34,17 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
         {
           name: 'zhifangsi_map',
           description:
-            '获取当前代码库的职方司全景战略舆图。包含基于 PageRank 的核心关隘文件（Hubs）、已注册模块、业务流和架构守则。',
+            '获取并生成当前代码库的职方司全景战略舆图。包含基于 PageRank 的核心关隘文件（Hubs）、已注册模块、业务流和架构守则，支持持久化保存为 Markdown 文件。',
           inputSchema: {
             type: 'object',
             properties: {
               target_dir: {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
+              },
+              output_file: {
+                type: 'string',
+                description: '可选，舆图 Markdown 保存文件路径，如 CODEBASE_MAP.md',
               },
             },
           },
@@ -138,8 +142,15 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
         const bridgeOnline = await bridge.isAvailable()
         const graph = buildWorkspaceGraph(targetDir)
         const text = formatZhifangsiMap(targetDir, graph, bridgeOnline)
+        const outputFile = args.output_file ? path.resolve(targetDir, String(args.output_file)) : null
+        if (outputFile) {
+          fs.writeFileSync(outputFile, text, 'utf-8')
+        }
         return {
-          content: [{ type: 'text', text }],
+          content: [
+            { type: 'text', text },
+            ...(outputFile ? [{ type: 'text', text: `✔ 战略舆图已持久化写入: \`${outputFile}\`` }] : []),
+          ],
         }
       }
 
