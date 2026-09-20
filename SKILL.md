@@ -39,22 +39,25 @@ description: >-
 ## 二、 命令行指令 (CLI Reference)
 
 ```bash
-# 1. 测绘当前代码库战略舆图 (输出节点数、边数、Top PageRank 核心关隘文件)
+# 1. 原位初始化代码库 Codebase Map 架构契约与 Wiki 目录 (生成 schema.md 与 wiki/)
+zhifangsi init [目标路径] [--force]
+
+# 2. 测绘当前代码库战略舆图 (输出节点数、边数、Top PageRank 核心关隘文件)
 zhifangsi map [目标路径]
 
-# 2. 提取代码高信息密度骨架 (剥离函数体，保留接口与签名，降噪 85%+)
+# 3. 提取代码高信息密度骨架 (剥离函数体，保留接口与签名，降噪 85%+)
 zhifangsi skeleton [目标路径] [输出文件.md]
 
-# 3. 执行关防守则与架构不变量合规巡检 (阻断跨层越权与非法依赖)
+# 4. 执行关防守则与架构不变量合规巡检 (阻断跨层越权与非法依赖)
 zhifangsi check [目标路径]
 
-# 4. 探测与 LLM Wiki 桌面端的桥接状态
+# 5. 探测与 LLM Wiki 桌面端的桥接状态
 zhifangsi bridge
 
-# 5. 将本地 wiki 页面增量同步给 LLM Wiki 桌面端建立向量索引
+# 6. 将本地 wiki 页面增量同步给 LLM Wiki 桌面端建立向量索引
 zhifangsi sync [目标路径]
 
-# 6. 启动标准 stdio MCP 服务
+# 7. 启动标准 stdio MCP 服务
 zhifangsi mcp
 ```
 

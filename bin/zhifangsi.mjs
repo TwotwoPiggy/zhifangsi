@@ -15,12 +15,32 @@ import { LLMWikiBridge } from '../dist/bridge/client.js'
 import { syncToLLMWiki } from '../dist/bridge/sync.js'
 import { generateCodebaseSkeleton } from '../dist/ast/skeletonizer.js'
 import { runZhifangsiMcpServer } from '../dist/mcp/server.js'
+import { initWikiProject } from '../dist/init/scaffold.js'
 
 const args = process.argv.slice(2)
 const command = args[0] || 'help'
 
 async function main() {
   switch (command) {
+    case 'init': {
+      const targetDir = path.resolve(args[1] || process.cwd())
+      const isForce = args.includes('--force') || args.includes('-f')
+      console.log(`\x1b[36m[职方司]\x1b[0m 正在初始化 Codebase Map 架构契约与 Wiki 目录: ${targetDir}...`)
+      const result = initWikiProject(targetDir, { force: isForce })
+      console.log(`\x1b[32m✔ 初始化完成:\x1b[0m 项目「${result.projectName}」`)
+      console.log(`  - 架构契约: ${result.schemaPath}`)
+      console.log(`  - 知识库根目录: ${result.wikiPath}`)
+      if (result.createdFiles.length > 0) {
+        console.log(`  已生成架构文件 (${result.createdFiles.length} 个):`)
+        result.createdFiles.forEach((f) => console.log(`    + ${f}`))
+      }
+      if (result.skippedFiles.length > 0) {
+        console.log(`  已存在并跳过文件 (${result.skippedFiles.length} 个，使用 --force 覆盖):`)
+        result.skippedFiles.forEach((f) => console.log(`    - ${f}`))
+      }
+      console.log(`\n\x1b[32m✔ 现在可在 LLM Wiki 桌面端直接「打开项目 (Open Project)」挂载此代码库！\x1b[0m`)
+      break
+    }
     case 'map': {
       const targetDir = path.resolve(args[1] || process.cwd())
       const outFile = args[2] ? path.resolve(args[2]) : null
@@ -115,13 +135,14 @@ async function main() {
 版本: 1.0.0 (支持独立运行与 LLM Wiki 桌面联动双模)
 
 用法:
-  zhifangsi map [dir] [outfile] 测绘并输出代码库拓扑、PageRank 核心关隘与模块列表 (可存盘)
+  zhifangsi init [dir] [--force] 原位初始化代码库 Codebase Map 架构契约 (生成 schema.md 及 wiki/ 目录)
+  zhifangsi map [dir] [outfile]  测绘并输出代码库拓扑、PageRank 核心关隘与模块列表 (可存盘)
   zhifangsi skeleton [dir] [out] 提取高信息密度代码骨架 (85%+ 压缩率)
-  zhifangsi check [dir]         执行关防守则与架构不变量静态合规核查 (阻断越权与非法依赖)
-  zhifangsi bridge             探测与 LLM Wiki 桌面端的联动状态
-  zhifangsi sync [dir]         将本地架构页面同步至 LLM Wiki 桌面端嵌入索引
-  zhifangsi mcp                启动 stdio MCP 服务 (供 Antigravity / Qoder / Copilot 调用)
-  zhifangsi help               显示帮助信息
+  zhifangsi check [dir]          执行关防守则与架构不变量静态合规核查 (阻断越权与非法依赖)
+  zhifangsi bridge              探测与 LLM Wiki 桌面端的联动状态
+  zhifangsi sync [dir]          将本地架构页面同步至 LLM Wiki 桌面端嵌入索引
+  zhifangsi mcp                 启动 stdio MCP 服务 (供 Antigravity / Qoder / Copilot 调用)
+  zhifangsi help                显示帮助信息
 `)
       break
     }
