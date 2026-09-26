@@ -41,18 +41,44 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
     }
     if (trimmed.startsWith('//') || trimmed.length === 0) continue
 
-    // 1. Imports
-    // import { a, b as c } from './x'
-    // import def from '../y'
-    // import * as z from 'pkg'
-    const importRegex = /\bimport\s+(?:(?:type\s+)?([^;]*?)\s+from\s+)?['"]([^'"]+)['"]/g
+    // Multiline statement accumulation for imports / re-exports
+    let currentStatement = trimmed
+    const isImportStart = /^import\b/.test(trimmed)
+    const isReExportStart = /^export\s+(?:type\s+)?(?:\*|\{)/.test(trimmed)
+
+    if ((isImportStart || isReExportStart) && !trimmed.includes("';") && !trimmed.includes('";') && !/['"][^'"]+['"]\s*;?$/.test(trimmed)) {
+      let accumulated = trimmed
+      let foundEndIdx = -1
+      for (let j = idx + 1; j < lines.length && j < idx + 50; j++) {
+        const next = lines[j].trim()
+        accumulated += ' ' + next
+        if (next.includes("';") || next.includes('";') || /['"][^'"]+['"]\s*;?$/.test(next)) {
+          foundEndIdx = j
+          break
+        }
+        if (next.endsWith(';') || next === '}') {
+          if (!accumulated.includes(' from ')) {
+            break
+          }
+        }
+      }
+      if (foundEndIdx !== -1 && /['"][^'"]+['"]/.test(accumulated)) {
+        currentStatement = accumulated
+        idx = foundEndIdx
+      }
+    }
+
+    // 1. Imports and re-exports
+    // Bare import: import './side-effect'
+    // Import/export from: import/export ... from 'specifier'
+    const importRegex = /\b(?:import\s+['"]([^'"]+)['"]|(?:import|export)\s+(?:type\s+)?([\s\S]*?)\s+from\s+['"]([^'"]+)['"])/g
     let importMatch: RegExpExecArray | null
     let foundImport = false
 
-    while ((importMatch = importRegex.exec(trimmed)) !== null) {
+    while ((importMatch = importRegex.exec(currentStatement)) !== null) {
       foundImport = true
-      const clause = (importMatch[1] || '').trim()
-      const specifier = importMatch[2].trim()
+      const specifier = (importMatch[1] || importMatch[3] || '').trim()
+      const clause = (importMatch[2] || '').trim()
       const symbols: string[] = []
 
       if (clause) {
@@ -65,6 +91,8 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
           })
         } else if (clause.startsWith('* as ')) {
           symbols.push(clause.replace('* as ', '').trim())
+        } else if (clause === '*') {
+          symbols.push('*')
         } else {
           // Default or mixed default + destructured
           const parts = clause.split(',')
@@ -75,19 +103,21 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
         }
       }
 
-      imports.push({
-        fromFile: filePath,
-        rawSpecifier: specifier,
-        importedSymbols: symbols,
-        isRelative: specifier.startsWith('.'),
-        line: lineNum,
-      })
+      if (specifier) {
+        imports.push({
+          fromFile: filePath,
+          rawSpecifier: specifier,
+          importedSymbols: symbols,
+          isRelative: specifier.startsWith('.'),
+          line: lineNum,
+        })
+      }
     }
 
     if (foundImport) continue
 
     // Dynamic import / require
-    const requireMatch = trimmed.match(/(?:const|let|var)\s+(?:\{([^}]+)\}|(\w+))\s*=\s*require\(['"]([^'"]+)['"]\)/)
+    const requireMatch = currentStatement.match(/(?:const|let|var)\s+(?:\{([^}]+)\}|(\w+))\s*=\s*require\(['"]([^'"]+)['"]\)/)
     if (requireMatch) {
       const symbols = requireMatch[1]
         ? requireMatch[1].split(',').map((s) => s.trim().split(/\s*:\s*/)[0])
@@ -100,6 +130,19 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
         rawSpecifier: specifier,
         importedSymbols: symbols,
         isRelative: specifier.startsWith('.'),
+        line: lineNum,
+      })
+      continue
+    }
+
+    // Dynamic import()
+    const dynamicImportMatch = currentStatement.match(/\bimport\(['"]([^'"]+)['"]\)/)
+    if (dynamicImportMatch) {
+      imports.push({
+        fromFile: filePath,
+        rawSpecifier: dynamicImportMatch[1],
+        importedSymbols: [],
+        isRelative: dynamicImportMatch[1].startsWith('.'),
         line: lineNum,
       })
       continue
@@ -436,12 +479,24 @@ export function resolveRelativeImport(fromFile: string, specifier: string, allFi
   }
 
   const basePath = parts.join('/')
+  const baseCandidates = [basePath]
+  if (basePath.endsWith('.js')) {
+    baseCandidates.push(basePath.replace(/\.js$/, '.ts'))
+    baseCandidates.push(basePath.replace(/\.js$/, '.tsx'))
+    baseCandidates.push(basePath.replace(/\.js$/, ''))
+  } else if (basePath.endsWith('.jsx')) {
+    baseCandidates.push(basePath.replace(/\.jsx$/, '.tsx'))
+    baseCandidates.push(basePath.replace(/\.jsx$/, ''))
+  }
+
   const candidateExtensions = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js']
 
-  for (const ext of candidateExtensions) {
-    const candidate = `${basePath}${ext}`
-    if (allFiles.includes(candidate)) {
-      return candidate
+  for (const base of baseCandidates) {
+    for (const ext of candidateExtensions) {
+      const candidate = `${base}${ext}`
+      if (allFiles.includes(candidate)) {
+        return candidate
+      }
     }
   }
 

@@ -108,8 +108,30 @@ pub async fn run_service(ctx: ServiceContext) {
     ]
 
     expect(resolveRelativeImport('src/components/button.tsx', './utils', allFiles)).toBe('src/components/utils.ts')
+    expect(resolveRelativeImport('src/components/button.tsx', './utils.js', allFiles)).toBe('src/components/utils.ts')
     expect(resolveRelativeImport('src/components/button.tsx', '../lib/logger', allFiles)).toBe('src/lib/logger/index.ts')
+    expect(resolveRelativeImport('src/components/button.tsx', '../lib/logger/index.js', allFiles)).toBe('src/lib/logger/index.ts')
     expect(resolveRelativeImport('src/components/button.tsx', 'external-pkg', allFiles)).toBeNull()
+  })
+
+  it('parses multiline imports and re-exports in TypeScript', () => {
+    const tsCode = `
+import {
+  alpha,
+  beta as b,
+  gamma
+} from './greek.js';
+export * from './tools/index.js';
+export { delta } from './delta.js';
+    `
+    const ast = parseTsJsAst('src/index.ts', tsCode)
+    expect(ast.imports.length).toBe(3)
+    expect(ast.imports[0].rawSpecifier).toBe('./greek.js')
+    expect(ast.imports[0].importedSymbols).toEqual(['alpha', 'beta', 'gamma'])
+    expect(ast.imports[1].rawSpecifier).toBe('./tools/index.js')
+    expect(ast.imports[1].importedSymbols).toEqual(['*'])
+    expect(ast.imports[2].rawSpecifier).toBe('./delta.js')
+    expect(ast.imports[2].importedSymbols).toEqual(['delta'])
   })
 })
 
