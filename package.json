@@ -1,6 +1,6 @@
 {
   "name": "zhifangsi",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "职方司 (zhifangsi) - 基于三省六部体系的代码库战略舆图、关防守则与自愈架构引擎 (支持独立运行与 LLM Wiki 桌面端联动双模)",
   "type": "module",
   "main": "dist/index.js",
