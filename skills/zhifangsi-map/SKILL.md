@@ -1,6 +1,6 @@
 ---
 name: zhifangsi-map
-description: 测绘并持久化生成当前代码库战略全景舆图文件 (CODEBASE_MAP.md)，识别 PageRank 核心枢纽关隘文件与依赖拓扑。
+description: 测绘生成代码库战略全景舆图 (CODEBASE_MAP.md)，识别核心关隘与依赖拓扑。
 ---
 
 # zhifangsi-map: 测绘并生成战略全景舆图

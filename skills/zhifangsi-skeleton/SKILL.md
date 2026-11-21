@@ -1,6 +1,6 @@
 ---
 name: zhifangsi-skeleton
-description: 提取代码库高信息密度骨架 (85%+ Token 降噪压缩)，剥离实现细节保留类型与签名契约。
+description: 提取代码库高信息密度骨架 (85%+ Token 压缩)，剥离实现细节保留签名契约。
 ---
 
 # zhifangsi-skeleton: 提取高信息密度代码骨架

@@ -1,10 +1,6 @@
 ---
 name: zhifangsi
-description: >-
-  兵部职方司 (Zhifangsi) - 基于三省六部体系的代码库战略舆图与架构自愈引擎。
-  支持单机独立模式与 LLM Wiki 桌面端（127.0.0.1:19828）联动双模。
-  提供 AST 确定性拓扑测绘、PageRank 核心关隘识别、局部邻域代码骨架压缩（85%+）、
-  变更爆炸半径与防撞车评估、存量代码库逆向冷启动建档、模块契约检索与业务流时序追踪。
+description: 兵部职方司：代码库战略舆图与架构自愈引擎（拓扑测绘、关隘识别、骨架提取与守则巡检）。
 ---
 
 # 兵部职方清吏司 (Zhifangsi)
@@ -45,7 +41,16 @@ zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--all]
 zhifangsi update [--git]
 zhifangsi uninstall
 
-# 1. 原位初始化代码库 Codebase Map 架构契约与 Wiki 目录 (生成 schema.md 与 wiki/)
+# 0.5 存储模式配置与 L1 跨项目路由 (默认原位 <repo>/wiki，支持集中外置 Vault)
+zhifangsi config [show] [目标路径]
+zhifangsi config set-mode <local|centralized>
+zhifangsi config set-vault <vaultDir> [--centralized]
+zhifangsi config set-repo [repoDir] <wikiDir>
+zhifangsi config unset-repo [repoDir]
+zhifangsi config reset
+zhifangsi repos [query] [--register [目标路径]]
+
+# 1. 初始化代码库 Codebase Map 架构契约与 Wiki 目录 (支持 --wiki-dir / --vault-dir / --centralized / --local)
 zhifangsi init [目标路径] [--force]
 
 # 2. 存量代码库冷启动自动建档 (基于 AST 目录拓扑逆向聚类生成 wiki/modules/*.md)
@@ -78,14 +83,15 @@ zhifangsi mcp
 
 ## 三、 MCP 工具清单 (面向 AI Agent)
 
-- **`zhifangsi_map`**：获取全库模块、工作流、不变量、循环依赖预警与核心关隘（Hubs）战略总图。
-- **`zhifangsi_check_invariants`**：对代码库执行关防守则合规巡检，扫描越权调用、非法依赖、循环依赖及 Wiki 舆图失真（Drift），支持 `status: draft` 草稿守则试运行。
-- **`zhifangsi_module_info`**：查询特定模块（支持模块名或目录路径）的职责、导出 API 签名契约与深度依赖影响范围。
-- **`zhifangsi_skeleton`**：基于局部性原理（Inline & Spill）提取目标文件/模块的骨架与 1 跳邻居导出契约（或全库骨架）。
-- **`zhifangsi_impact`**：评估拟修改文件的变更爆炸半径、波及模块、建议回归验证的业务流（Workflows）及高危关隘防撞车预警。
-- **`zhifangsi_bootstrap`**：存量代码库基于 AST 目录拓扑一键逆向聚类生成 `wiki/modules/*.md` 档案。
-- **`zhifangsi_workflow_trace`**：追踪特定业务流的端到端调用时序与阶段步骤。
-- **`zhifangsi_search`**：混合语义检索（桌面端在线走 LanceDB，离线自动走本地 Wiki + AST 导出符号混合检索）。
+- **`zhifangsi_repos`**：查询 L1 跨项目路由注册表（仅返回各项目的轻量名片：slug、源码路径、Wiki 路径、职责摘要与模块名，不加载完整 Wiki；适用于 Super-agent Router 层先定位目标 Repo）。
+- **`zhifangsi_map`**：获取全库模块、工作流、不变量、循环依赖预警与核心关隘（Hubs）战略总图（支持可选 `wiki_dir`）。
+- **`zhifangsi_check_invariants`**：对代码库执行关防守则合规巡检，扫描越权调用、非法依赖、循环依赖及 Wiki 舆图失真（Drift），支持 `status: draft` 草稿守则试运行（支持可选 `wiki_dir`）。
+- **`zhifangsi_module_info`**：查询特定模块（支持模块名或目录路径）的职责、导出 API 签名契约与深度依赖影响范围（支持可选 `wiki_dir`）。
+- **`zhifangsi_skeleton`**：基于局部性原理（Inline & Spill）提取目标文件/模块的骨架与 1 跳邻居导出契约（或全库骨架，支持可选 `wiki_dir`）。
+- **`zhifangsi_impact`**：评估拟修改文件的变更爆炸半径、波及模块、建议回归验证的业务流（Workflows）及高危关隘防撞车预警（支持可选 `wiki_dir`）。
+- **`zhifangsi_bootstrap`**：存量代码库基于 AST 目录拓扑一键逆向聚类生成 `wiki/modules/*.md` 档案（支持可选 `wiki_dir`）。
+- **`zhifangsi_workflow_trace`**：追踪特定业务流的端到端调用时序与阶段步骤（支持可选 `wiki_dir`）。
+- **`zhifangsi_search`**：混合语义检索（桌面端在线走 LanceDB，离线自动走本地 Wiki + AST 导出符号混合检索，支持可选 `wiki_dir`）。
 - **`zhifangsi_bridge_status`**：检查与 LLM Wiki 桌面端的联动状态。
 
 ---

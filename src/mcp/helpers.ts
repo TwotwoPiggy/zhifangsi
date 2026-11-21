@@ -6,6 +6,7 @@ import type { FileAstInfo } from '../ast/types.js'
 import { createModuleSkeleton, shouldIgnorePath } from '../ast/skeletonizer.js'
 import { loadInvariantsFromWorkspace, checkInvariants, matchPathGlob } from '../invariants/checker.js'
 import { extractFrontmatter } from '../invariants/parser.js'
+import { resolveStoragePaths, type StorageResolveOptions } from '../config/storage.js'
 
 /**
  * Load path aliases from tsconfig.json if present (e.g., "@/*": ["src/*"])
@@ -84,12 +85,25 @@ export function buildWorkspaceGraph(rootDir: string): DependencyGraph {
 /**
  * Format a comprehensive codebase map for AI Agents
  */
-export function formatZhifangsiMap(rootDir: string, graph: DependencyGraph, bridgeOnline: boolean): string {
+export function formatZhifangsiMap(
+  rootDir: string,
+  graph: DependencyGraph,
+  bridgeOnline: boolean,
+  storageOptions: StorageResolveOptions = {}
+): string {
   const analysis = graph.analyze()
+  const storage = resolveStoragePaths(rootDir, storageOptions)
   const lines: string[] = []
 
+  const storageLabel =
+    storage.mode === 'local'
+      ? `原位 (\`${storage.wikiDir}\`)`
+      : `${storage.mode === 'centralized' ? '集中外置' : '自定义外置'} (\`${storage.wikiDir}\`)`
+
   lines.push('# 职方司 (Zhifangsi) - 代码库战略舆图')
-  lines.push(`> 根目录: \`${rootDir}\` | 节点数: ${analysis.nodeCount} | 依赖边数: ${analysis.edgeCount} | LLM Wiki 桥接: ${bridgeOnline ? '已连接 (127.0.0.1:19828)' : '独立离线模式'}\n`)
+  lines.push(
+    `> 根目录: \`${storage.repoRoot}\` | 知识库: ${storageLabel} | 节点数: ${analysis.nodeCount} | 依赖边数: ${analysis.edgeCount} | LLM Wiki 桥接: ${bridgeOnline ? '已连接 (127.0.0.1:19828)' : '独立离线模式'}\n`
+  )
 
   lines.push('## 1. 核心枢纽关隘 (Top Architectural Hubs by PageRank)')
   const topHubs = analysis.hubs.slice(0, 8)
@@ -109,7 +123,7 @@ export function formatZhifangsiMap(rootDir: string, graph: DependencyGraph, brid
   }
 
   // Scan wiki/modules if present
-  const wikiDir = path.join(rootDir, 'wiki')
+  const wikiDir = storage.wikiDir
   const modulesDir = path.join(wikiDir, 'modules')
   if (fs.existsSync(modulesDir)) {
     lines.push('\n## 2. 注册架构模块 (wiki/modules/)')
@@ -137,9 +151,9 @@ export function formatZhifangsiMap(rootDir: string, graph: DependencyGraph, brid
     for (const f of files) {
       lines.push(`- [[invariants/${f.replace(/\.md$/, '')}]]`)
     }
-    const invariants = loadInvariantsFromWorkspace(rootDir)
+    const invariants = loadInvariantsFromWorkspace(rootDir, { wikiDir })
     if (invariants.length > 0) {
-      const report = checkInvariants(invariants, graph, { rootDir })
+      const report = checkInvariants(invariants, graph, { rootDir, wikiDir })
       lines.push(`> 关防合规状态: ${report.passed ? '全部合规 ✔' : `发现 ${report.totalViolations} 处违规 ✖`}`)
     }
   }
@@ -158,7 +172,12 @@ export interface LocalSearchHit {
 /**
  * 单机独立模式 (Standalone Mode) 下的本地混合检索：同时检索 wiki/**\/*.md 与 AST 符号表
  */
-export function searchLocalWorkspace(rootDir: string, query: string, graph: DependencyGraph): LocalSearchHit[] {
+export function searchLocalWorkspace(
+  rootDir: string,
+  query: string,
+  graph: DependencyGraph,
+  storageOptions: StorageResolveOptions = {}
+): LocalSearchHit[] {
   const hits: LocalSearchHit[] = []
   const terms = query
     .toLowerCase()
@@ -169,7 +188,8 @@ export function searchLocalWorkspace(rootDir: string, query: string, graph: Depe
   if (terms.length === 0) return hits
 
   // 1. Search wiki/**/*.md documents
-  const wikiDir = path.join(rootDir, 'wiki')
+  const storage = resolveStoragePaths(rootDir, storageOptions)
+  const wikiDir = storage.wikiDir
   function walkWiki(dir: string) {
     if (!fs.existsSync(dir)) return
     const entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -181,7 +201,10 @@ export function searchLocalWorkspace(rootDir: string, query: string, graph: Depe
         try {
           const content = fs.readFileSync(fullPath, 'utf-8')
           const { data, body } = extractFrontmatter(content)
-          const relPath = path.relative(rootDir, fullPath).replace(/\\/g, '/')
+          const relPath =
+            storage.mode === 'local'
+              ? path.relative(storage.repoRoot, fullPath).replace(/\\/g, '/')
+              : `wiki/${path.relative(wikiDir, fullPath).replace(/\\/g, '/')}`
           const title = String(data.title || entry.name.replace(/\.md$/, ''))
           const lowerTitle = title.toLowerCase()
           const lowerBody = body.toLowerCase()
@@ -263,7 +286,8 @@ export function generateNeighborhoodSkeleton(
   rootDir: string,
   target: string,
   graph: DependencyGraph,
-  hops = 1
+  hops = 1,
+  storageOptions: StorageResolveOptions = {}
 ): string {
   const targetFiles = graph.resolveModuleFiles(target)
   if (targetFiles.length === 0) {
@@ -271,7 +295,7 @@ export function generateNeighborhoodSkeleton(
   }
 
   const pageRanks = graph.computePageRank()
-  const invariants = loadInvariantsFromWorkspace(rootDir)
+  const invariants = loadInvariantsFromWorkspace(rootDir, storageOptions)
   const lines: string[] = []
 
   lines.push(`# 局部邻域代码骨架 (Inline & Spill Neighborhood Skeleton): \`${target}\``)
@@ -368,8 +392,10 @@ export interface ChangeImpactResult {
 export function analyzeChangeImpact(
   rootDir: string,
   files: string[],
-  graph: DependencyGraph
+  graph: DependencyGraph,
+  storageOptions: StorageResolveOptions = {}
 ): ChangeImpactResult {
+  const storage = resolveStoragePaths(rootDir, storageOptions)
   const resolvedTargets = new Set<string>()
   for (const f of files) {
     for (const m of graph.resolveModuleFiles(f)) {
@@ -399,7 +425,7 @@ export function analyzeChangeImpact(
 
   // Map impacted files to wiki/modules/*.md
   const affectedModules = new Set<string>()
-  const modulesDir = path.join(rootDir, 'wiki', 'modules')
+  const modulesDir = path.join(storage.wikiDir, 'modules')
   if (fs.existsSync(modulesDir)) {
     const modFiles = fs.readdirSync(modulesDir).filter((f) => f.endsWith('.md'))
     for (const mf of modFiles) {
@@ -431,7 +457,7 @@ export function analyzeChangeImpact(
 
   // Map affected modules/files to wiki/workflows/*.md
   const affectedWorkflows = new Set<string>()
-  const workflowsDir = path.join(rootDir, 'wiki', 'workflows')
+  const workflowsDir = path.join(storage.wikiDir, 'workflows')
   if (fs.existsSync(workflowsDir)) {
     const wfFiles = fs.readdirSync(workflowsDir).filter((f) => f.endsWith('.md'))
     for (const wf of wfFiles) {

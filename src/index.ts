@@ -1,3 +1,4 @@
+export * from './config/storage.js'
 export * from './ast/types.js'
 export * from './ast/parser.js'
 export * from './ast/dependency-graph.js'

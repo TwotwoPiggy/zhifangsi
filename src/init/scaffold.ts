@@ -1,12 +1,18 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { DependencyGraph } from '../ast/dependency-graph.js'
+import {
+  resolveStoragePaths,
+  upsertRepoRegistry,
+  type StorageResolveOptions,
+} from '../config/storage.js'
 
-export interface InitProjectOptions {
+export interface InitProjectOptions extends StorageResolveOptions {
   projectName?: string
   force?: boolean
   withObsidian?: boolean
   createSampleInvariant?: boolean
+  registerRegistry?: boolean
 }
 
 export interface InitProjectResult {
@@ -14,13 +20,23 @@ export interface InitProjectResult {
   createdFiles: string[]
   createdDirs: string[]
   skippedFiles: string[]
+  repoRoot: string
+  storageRoot: string
+  storageMode: 'local' | 'centralized' | 'custom'
   schemaPath: string
   wikiPath: string
+}
+
+export interface BootstrapModulesOptions extends StorageResolveOptions {
+  force?: boolean
+  registerRegistry?: boolean
 }
 
 export interface BootstrapModulesResult {
   modulesCreated: string[]
   modulesSkipped: string[]
+  wikiDir: string
+  storageMode: 'local' | 'centralized' | 'custom'
 }
 
 function detectProjectInfo(targetDir: string): { name: string; techStack: string } {
@@ -148,13 +164,18 @@ superseded_by: ""                # 被取代的 ADR 引用
 `
 }
 
-export function generatePurposeContent(projectName: string, techStack: string): string {
+export function generatePurposeContent(
+  projectName: string,
+  techStack: string,
+  repoRoot?: string
+): string {
+  const repoLine = repoRoot ? `- **源码仓库路径**: \`${repoRoot}\`\n` : ''
   return `# Project Purpose — Codebase Map
 
 ## 1. 代码库概览 (Codebase Overview)
 
 - **工程名称**: \`${projectName}\`
-- **主要技术栈**: ${techStack}
+${repoLine}- **主要技术栈**: ${techStack}
 - **架构范式**: <!-- 模块化单体 / 微服务 / 清洁架构 / 事件驱动 / 插件体系 -->
 
 ## 2. 核心使命与架构目标 (Core Mission & Goals)
@@ -275,65 +296,89 @@ export function initWikiProject(
   targetDir: string,
   options: InitProjectOptions = {}
 ): InitProjectResult {
-  const root = path.resolve(targetDir)
-  if (!fs.existsSync(root)) {
-    fs.mkdirSync(root, { recursive: true })
+  const storage = resolveStoragePaths(targetDir, options)
+  const repoRoot = storage.repoRoot
+  const storageRoot = storage.storageRoot
+  const wikiRoot = storage.wikiDir
+
+  if (!fs.existsSync(storageRoot)) {
+    fs.mkdirSync(storageRoot, { recursive: true })
+  }
+  if (!fs.existsSync(wikiRoot)) {
+    fs.mkdirSync(wikiRoot, { recursive: true })
   }
 
-  const { name: detectedName, techStack } = detectProjectInfo(root)
+  const { name: detectedName, techStack } = detectProjectInfo(repoRoot)
   const projectName = options.projectName || detectedName
 
   const createdFiles: string[] = []
   const createdDirs: string[] = []
   const skippedFiles: string[] = []
 
-  const requiredDirs = [
-    'raw/sources',
-    'raw/assets',
-    'wiki',
-    'wiki/modules',
-    'wiki/workflows',
-    'wiki/invariants',
-    'wiki/adr',
-    'wiki/concepts',
-    'wiki/entities',
-    'wiki/queries',
-    'wiki/sources',
-    'wiki/comparisons',
-    'wiki/synthesis',
-  ]
-
+  const rootDirs = ['raw/sources', 'raw/assets']
   if (options.withObsidian !== false) {
-    requiredDirs.push('.obsidian')
+    rootDirs.push('.obsidian')
   }
 
-  for (const dir of requiredDirs) {
-    const fullDirPath = path.join(root, dir)
+  for (const dir of rootDirs) {
+    const fullDirPath = path.join(storageRoot, dir)
     if (!fs.existsSync(fullDirPath)) {
       fs.mkdirSync(fullDirPath, { recursive: true })
       createdDirs.push(dir)
     }
   }
 
-  const writeFileSafe = (relPath: string, content: string) => {
-    const fullPath = path.join(root, relPath)
-    if (fs.existsSync(fullPath) && !options.force) {
-      skippedFiles.push(relPath)
-      return
+  const wikiSubDirs = [
+    'modules',
+    'workflows',
+    'invariants',
+    'adr',
+    'concepts',
+    'entities',
+    'queries',
+    'sources',
+    'comparisons',
+    'synthesis',
+  ]
+  const wikiRelPrefix = path.relative(storageRoot, wikiRoot).replace(/\\/g, '/')
+
+  for (const sub of wikiSubDirs) {
+    const fullDirPath = path.join(wikiRoot, sub)
+    if (!fs.existsSync(fullDirPath)) {
+      fs.mkdirSync(fullDirPath, { recursive: true })
+      createdDirs.push(wikiRelPrefix ? `${wikiRelPrefix}/${sub}` : sub)
     }
-    fs.writeFileSync(fullPath, content, 'utf-8')
-    createdFiles.push(relPath)
   }
 
-  writeFileSafe('schema.md', generateSchemaContent())
-  writeFileSafe('purpose.md', generatePurposeContent(projectName, techStack))
-  writeFileSafe('wiki/index.md', generateIndexContent())
-  writeFileSafe('wiki/overview.md', generateOverviewContent(projectName))
-  writeFileSafe('wiki/log.md', generateLogContent())
+  const writeFileSafe = (baseDir: string, relPath: string, displayRel: string, content: string) => {
+    const fullPath = path.join(baseDir, relPath)
+    if (fs.existsSync(fullPath) && !options.force) {
+      skippedFiles.push(displayRel)
+      return
+    }
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true })
+    fs.writeFileSync(fullPath, content, 'utf-8')
+    createdFiles.push(displayRel)
+  }
+
+  const wikiDisplay = (subPath: string) => (wikiRelPrefix ? `${wikiRelPrefix}/${subPath}` : subPath)
+
+  writeFileSafe(storageRoot, 'schema.md', 'schema.md', generateSchemaContent())
+  writeFileSafe(
+    storageRoot,
+    'purpose.md',
+    'purpose.md',
+    generatePurposeContent(projectName, techStack, storage.mode !== 'local' ? repoRoot : undefined)
+  )
+  writeFileSafe(wikiRoot, 'index.md', wikiDisplay('index.md'), generateIndexContent())
+  writeFileSafe(wikiRoot, 'overview.md', wikiDisplay('overview.md'), generateOverviewContent(projectName))
+  writeFileSafe(wikiRoot, 'log.md', wikiDisplay('log.md'), generateLogContent())
 
   if (options.createSampleInvariant !== false) {
     writeFileSafe(
-      'wiki/invariants/001-unidirectional-flow.md',
+      wikiRoot,
+      'invariants/001-unidirectional-flow.md',
+      wikiDisplay('invariants/001-unidirectional-flow.md'),
       generateSampleInvariantContent()
     )
   }
@@ -346,13 +391,18 @@ export function initWikiProject(
       newLinkFormat: 'shortest',
       showUnsupportedFiles: false,
     }
-    writeFileSafe('.obsidian/app.json', JSON.stringify(obsidianApp, null, 2))
+    writeFileSafe(storageRoot, '.obsidian/app.json', '.obsidian/app.json', JSON.stringify(obsidianApp, null, 2))
 
     const obsidianAppearance = {
       baseFontSize: 16,
       theme: 'obsidian',
     }
-    writeFileSafe('.obsidian/appearance.json', JSON.stringify(obsidianAppearance, null, 2))
+    writeFileSafe(
+      storageRoot,
+      '.obsidian/appearance.json',
+      '.obsidian/appearance.json',
+      JSON.stringify(obsidianAppearance, null, 2)
+    )
 
     const obsidianPlugins = {
       'file-explorer': true,
@@ -364,7 +414,16 @@ export function initWikiProject(
       'outgoing-link': true,
       'starred': true,
     }
-    writeFileSafe('.obsidian/core-plugins.json', JSON.stringify(obsidianPlugins, null, 2))
+    writeFileSafe(
+      storageRoot,
+      '.obsidian/core-plugins.json',
+      '.obsidian/core-plugins.json',
+      JSON.stringify(obsidianPlugins, null, 2)
+    )
+  }
+
+  if (options.registerRegistry !== false) {
+    upsertRepoRegistry(storage, { name: projectName, techStack }, { force: options.registerRegistry === true })
   }
 
   return {
@@ -372,8 +431,11 @@ export function initWikiProject(
     createdFiles,
     createdDirs,
     skippedFiles,
-    schemaPath: path.join(root, 'schema.md'),
-    wikiPath: path.join(root, 'wiki'),
+    repoRoot,
+    storageRoot,
+    storageMode: storage.mode,
+    schemaPath: path.join(storageRoot, 'schema.md'),
+    wikiPath: wikiRoot,
   }
 }
 
@@ -383,10 +445,10 @@ export function initWikiProject(
 export function bootstrapWikiModules(
   targetDir: string,
   graph: DependencyGraph,
-  options: { force?: boolean } = {}
+  options: BootstrapModulesOptions = {}
 ): BootstrapModulesResult {
-  const root = path.resolve(targetDir)
-  const modulesDir = path.join(root, 'wiki', 'modules')
+  const storage = resolveStoragePaths(targetDir, options)
+  const modulesDir = path.join(storage.wikiDir, 'modules')
   if (!fs.existsSync(modulesDir)) {
     fs.mkdirSync(modulesDir, { recursive: true })
   }
@@ -499,5 +561,14 @@ export function bootstrapWikiModules(
     modulesCreated.push(`wiki/modules/${slug}.md`)
   }
 
-  return { modulesCreated, modulesSkipped }
+  if (options.registerRegistry !== false) {
+    upsertRepoRegistry(storage, {}, { force: options.registerRegistry === true })
+  }
+
+  return {
+    modulesCreated,
+    modulesSkipped,
+    wikiDir: storage.wikiDir,
+    storageMode: storage.mode,
+  }
 }

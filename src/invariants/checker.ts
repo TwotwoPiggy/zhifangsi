@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { DependencyGraph } from '../ast/dependency-graph.js'
+import { resolveStoragePaths, type StorageResolveOptions } from '../config/storage.js'
 import { extractFrontmatter, parseInvariantFile } from './parser.js'
 import type {
   InvariantCheckReport,
@@ -77,10 +78,14 @@ export function matchPathGlob(pattern: string, filePath: string): boolean {
 }
 
 /**
- * 从工作区 wiki/invariants/ 目录加载所有关防守则
+ * 从工作区（或外置知识库）的 wiki/invariants/ 目录加载所有关防守则
  */
-export function loadInvariantsFromWorkspace(rootDir: string): InvariantDefinition[] {
-  const invariantsDir = path.join(rootDir, 'wiki', 'invariants')
+export function loadInvariantsFromWorkspace(
+  rootDir: string,
+  options: StorageResolveOptions = {}
+): InvariantDefinition[] {
+  const storage = resolveStoragePaths(rootDir, options)
+  const invariantsDir = path.join(storage.wikiDir, 'invariants')
   if (!fs.existsSync(invariantsDir)) {
     return []
   }
@@ -105,9 +110,14 @@ export function loadInvariantsFromWorkspace(rootDir: string): InvariantDefinitio
 /**
  * 检查 wiki/modules/*.md 与真实 AST 代码之间的失真/漂移 (Wiki Drift Detection)
  */
-export function checkWikiDrift(rootDir: string, graph: DependencyGraph): string[] {
+export function checkWikiDrift(
+  rootDir: string,
+  graph: DependencyGraph,
+  options: StorageResolveOptions = {}
+): string[] {
   const warnings: string[] = []
-  const modulesDir = path.join(rootDir, 'wiki', 'modules')
+  const storage = resolveStoragePaths(rootDir, options)
+  const modulesDir = path.join(storage.wikiDir, 'modules')
   if (!fs.existsSync(modulesDir)) return warnings
 
   const files = fs.readdirSync(modulesDir).filter((f) => f.endsWith('.md'))
@@ -170,7 +180,7 @@ export function checkWikiDrift(rootDir: string, graph: DependencyGraph): string[
   return warnings
 }
 
-export interface CheckOptions {
+export interface CheckOptions extends StorageResolveOptions {
   rootDir?: string
   checkDrift?: boolean
 }
@@ -331,7 +341,7 @@ export function checkInvariants(
 
   const driftWarnings =
     options.rootDir && options.checkDrift !== false
-      ? checkWikiDrift(options.rootDir, graph)
+      ? checkWikiDrift(options.rootDir, graph, options)
       : []
 
   return {

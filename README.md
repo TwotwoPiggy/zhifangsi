@@ -62,9 +62,10 @@
   - `allow_only`：白名单模式，限定模块只能单向依赖指定下层；
   - `isolated_module`：私有内部实现隔离，仅受信任文件允许导入。
 
-### 6. 双模驱动（Dual Mode）
+### 6. 双模驱动与双存储模式（Dual Mode & Dual Storage）
 - **单机独立模式 (Standalone)**：纯本地零外部依赖运行，提供本地 AST 测绘、骨架提取、不变量巡检与本地 Wiki + AST 符号混合检索；
-- **LLM Wiki 联动模式 (Bridge Mode)**：自动探测本地 LLM Wiki 桌面客户端（`http://127.0.0.1:19828`），开启 Sigma.js 知识图谱画布同步、LanceDB 向量混合检索与增量页面嵌入。
+- **LLM Wiki 联动模式 (Bridge Mode)**：自动探测本地 LLM Wiki 桌面客户端（`http://127.0.0.1:19828`），开启 Sigma.js 知识图谱画布同步、LanceDB 向量混合检索与增量页面嵌入；
+- **默认原位 + 集中外置双存储**：默认将知识库原位存放在 `<项目根目录>/wiki`（零配置、随 Git 演进）；也可一键切换至**集中外置模式**（统一存放在 `<vaultDir>/repos/<slug>/wiki`，不污染业务仓库），并自动维护 L1 跨项目路由注册表 `<vaultDir>/registry.json` 供 Super-agent Router 层先寻址定位 Repo。
 
 ---
 
@@ -142,7 +143,16 @@ zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--claude|--all]
 zhifangsi update [--git]
 zhifangsi uninstall
 
-# 1. 原位初始化代码库 Codebase Map 架构契约 (生成 schema.md 及 wiki/ 目录)
+# 0.5 知识库存储配置与 L1 跨项目路由 (默认原位，支持集中外置)
+zhifangsi config [show] [代码库路径]              # 查看全局配置与当前项目的知识库解析路径
+zhifangsi config set-mode <local|centralized>     # 切换全局默认模式 (local 原位 / centralized 集中外置)
+zhifangsi config set-vault <目录> [--centralized] # 设置集中外置 Vault 根目录
+zhifangsi config set-repo [代码库路径] <wiki目录> # 为单个项目指定独立知识库路径覆盖
+zhifangsi config unset-repo [代码库路径]          # 移除单项目覆盖
+zhifangsi config reset                            # 恢复默认配置 (local + ~/.zhifangsi/vault)
+zhifangsi repos [关键词] [--register [代码库路径]] # 检索或登记 L1 跨项目路由注册表
+
+# 1. 初始化代码库 Codebase Map 架构契约 (支持 --wiki-dir / --vault-dir / --centralized / --local)
 zhifangsi init [代码库路径] [--force]
 
 # 2. 存量代码库冷启动自动建档 (基于 AST 目录拓扑逆向聚类生成 wiki/modules/*.md)
@@ -221,20 +231,50 @@ constraints:
 
 ---
 
-## 🤖 MCP 2.0 军机工具集（9 大工具）
+## 🗂️ 知识库存储配置（默认原位 + 支持集中外置）
 
-职方司基于标准 `@modelcontextprotocol/sdk` 实现，向 Antigravity、Qoder、VS Code Copilot、Cursor、Claude Code 等 Agent 暴露以下 9 大军机工具：
+职方司默认提供零配置原位模式（`<repo>/wiki`），同时支持将所有项目的知识库**集中外置**到统一的 Vault 目录（默认 `~/.zhifangsi/vault/repos/<slug>/wiki`），并自动处理多仓库重名防冲突与 L1 跨项目路由登记：
+
+```bash
+# 开启集中外置并指定 Vault 根目录（一步到位）
+zhifangsi config set-vault D:/zhifangsi-vault --centralized
+
+# 查看当前项目最终解析到的知识库位置与来源
+zhifangsi config
+
+# 仅为某个特定项目单独外置（保持其他项目默认原位）
+zhifangsi config set-repo D:/work/my-app D:/zhifangsi-vault/my-app/wiki
+
+# 或单次命令临时覆盖
+zhifangsi init . --centralized --vault-dir D:/zhifangsi-vault
+zhifangsi check . --wiki-dir D:/custom/my-app/wiki
+```
+
+**路径解析优先级（高 → 低）**：
+1. 显式参数：CLI `--wiki-dir` / `--vault-dir` / `--centralized` / `--local`，或 MCP 入参 `wiki_dir`
+2. 环境变量：`ZHIFANGSI_WIKI_DIR` / `ZHIFANGSI_STORAGE_MODE` / `ZHIFANGSI_VAULT_DIR`
+3. 项目级配置文件：`<项目根目录>/.zhifangsi.json`（支持 `storageMode` / `wikiDir` / `storageRoot` / `slug` / `summary` / `keywords`）
+4. 全局单仓库覆盖：`~/.zhifangsi/config.json` 中的 `repoOverrides`
+5. 全局集中外置：`~/.zhifangsi/config.json` 中 `storageMode: "centralized"` → `<vaultDir>/repos/<slug>/wiki`
+6. 默认回退：原位本地模式 `<项目根目录>/wiki`
+
+---
+
+## 🤖 MCP 2.0 军机工具集（10 大工具）
+
+职方司基于标准 `@modelcontextprotocol/sdk` 实现，向 Antigravity、Qoder、VS Code Copilot、Cursor、Claude Code 等 Agent 暴露以下 10 大军机工具（涉及 Wiki 读写的工具均支持可选 `wiki_dir` 参数）：
 
 | 工具名称 | 作用说明 | 参数 |
 | :--- | :--- | :--- |
-| `zhifangsi_map` | 获取并持久化代码库全景战略舆图、PageRank 核心关隘、循环依赖预警与守则状态 | `target_dir`, `output_file` (可选) |
-| `zhifangsi_check_invariants` | 运行关防守则静态合规巡检，检测越权依赖、循环依赖与 Wiki 舆图失真（Drift） | `target_dir` (可选) |
-| `zhifangsi_skeleton` | 基于局部性原理（Inline & Spill）提取目标文件/模块 1 跳邻域骨架或全库骨架 | `target`, `hops`, `target_dir` (均可选) |
-| `zhifangsi_impact` | 评估拟修改文件的变更爆炸半径、波及模块、需回归业务流及核心关隘防撞车预警 | `files` (必填), `target_dir` (可选) |
-| `zhifangsi_bootstrap` | 存量代码库冷启动自动建档，基于 AST 目录拓扑聚类生成 `wiki/modules/*.md` | `target_dir`, `force` (可选) |
-| `zhifangsi_module_info` | 查询特定模块（支持模块名或目录路径）的职责定义、公共 API 导出契约与影响范围 | `module_name` (必填), `target_dir` (可选) |
-| `zhifangsi_workflow_trace` | 追踪核心业务流水线的端到端调用时序与阶段步骤 | `workflow_name` (必填), `target_dir` (可选) |
-| `zhifangsi_search` | 混合语义检索（桌面端在线走 LanceDB 向量检索，离线自动回退本地 Wiki + AST 符号） | `query` (必填), `target_dir` (可选) |
+| `zhifangsi_repos` | 查询 L1 跨项目路由注册表（仅返回轻量名片，供 Super-agent Router 先定位目标 Repo） | `query`, `vault_dir` (均可选) |
+| `zhifangsi_map` | 获取并持久化代码库全景战略舆图、PageRank 核心关隘、循环依赖预警与守则状态 | `target_dir`, `wiki_dir`, `output_file` (可选) |
+| `zhifangsi_check_invariants` | 运行关防守则静态合规巡检，检测越权依赖、循环依赖与 Wiki 舆图失真（Drift） | `target_dir`, `wiki_dir` (可选) |
+| `zhifangsi_skeleton` | 基于局部性原理（Inline & Spill）提取目标文件/模块 1 跳邻域骨架或全库骨架 | `target`, `hops`, `target_dir`, `wiki_dir` (均可选) |
+| `zhifangsi_impact` | 评估拟修改文件的变更爆炸半径、波及模块、需回归业务流及核心关隘防撞车预警 | `files` (必填), `target_dir`, `wiki_dir` (可选) |
+| `zhifangsi_bootstrap` | 存量代码库冷启动自动建档，基于 AST 目录拓扑聚类生成 `wiki/modules/*.md` | `target_dir`, `wiki_dir`, `force` (可选) |
+| `zhifangsi_module_info` | 查询特定模块（支持模块名或目录路径）的职责定义、公共 API 导出契约与影响范围 | `module_name` (必填), `target_dir`, `wiki_dir` (可选) |
+| `zhifangsi_workflow_trace` | 追踪核心业务流水线的端到端调用时序与阶段步骤 | `workflow_name` (必填), `target_dir`, `wiki_dir` (可选) |
+| `zhifangsi_search` | 混合语义检索（桌面端在线走 LanceDB 向量检索，离线自动回退本地 Wiki + AST 符号） | `query` (必填), `target_dir`, `wiki_dir` (可选) |
 | `zhifangsi_bridge_status` | 检查与 LLM Wiki 桌面端（`127.0.0.1:19828`）的桥接协同状态 | 无 |
 
 ### Antigravity 斜杠技能组（6 项 Skills）

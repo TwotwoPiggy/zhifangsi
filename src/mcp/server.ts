@@ -20,6 +20,13 @@ import {
 import { extractFrontmatter } from '../invariants/parser.js'
 import { generateCodebaseSkeleton } from '../ast/skeletonizer.js'
 import { bootstrapWikiModules } from '../init/scaffold.js'
+import {
+  resolveStoragePaths,
+  loadGlobalConfig,
+  searchRepoRegistry,
+  formatRepoRegistryReport,
+  upsertRepoRegistry,
+} from '../config/storage.js'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
@@ -51,6 +58,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
               },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时按全局/项目配置自动解析（默认原位，支持集中外置）',
+              },
               output_file: {
                 type: 'string',
                 description: '可选，舆图 Markdown 保存文件路径，如 CODEBASE_MAP.md',
@@ -73,6 +84,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
               },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+              },
             },
             required: ['module_name'],
           },
@@ -92,6 +107,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
               },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+              },
             },
             required: ['workflow_name'],
           },
@@ -110,6 +129,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
               target_dir: {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
+              },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
               },
             },
             required: ['query'],
@@ -135,6 +158,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
               },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+              },
             },
           },
         },
@@ -157,6 +184,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
               },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+              },
             },
           },
         },
@@ -176,6 +207,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
               },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+              },
             },
             required: ['files'],
           },
@@ -191,9 +226,31 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
                 type: 'string',
                 description: '代码库根路径，缺省为当前工作目录',
               },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+              },
               force: {
                 type: 'boolean',
                 description: '是否覆盖已存在的模块档案，默认为 false',
+              },
+            },
+          },
+        },
+        {
+          name: 'zhifangsi_repos',
+          description:
+            '查询 L1 跨项目路由注册表（仅返回各项目的轻量名片：slug、源码路径、Wiki 路径、职责摘要与模块名，不加载完整 Wiki）。适用于 Super-agent Router 层先定位目标 Repo，再派发 Worker 进入目标 Repo 查 Wiki 与源码。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: '可选，按项目名、职责、技术栈、模块名或关键词筛选目标 Repo',
+              },
+              vault_dir: {
+                type: 'string',
+                description: '可选，指定集中外置 Vault 根目录（缺省使用全局配置）',
               },
             },
           },
@@ -205,12 +262,17 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params
     const targetDir = (args.target_dir as string) || process.cwd()
+    const wikiDirArg = args.wiki_dir ? String(args.wiki_dir) : undefined
+    const storage = resolveStoragePaths(targetDir, { wikiDir: wikiDirArg })
 
     switch (name) {
       case 'zhifangsi_map': {
         const bridgeOnline = await bridge.isAvailable()
         const graph = buildWorkspaceGraph(targetDir)
-        const text = formatZhifangsiMap(targetDir, graph, bridgeOnline)
+        const text = formatZhifangsiMap(targetDir, graph, bridgeOnline, { wikiDir: storage.wikiDir })
+        if (fs.existsSync(storage.wikiDir)) {
+          upsertRepoRegistry(storage)
+        }
         const outputFile = args.output_file ? path.resolve(targetDir, String(args.output_file)) : null
         if (outputFile) {
           fs.writeFileSync(outputFile, text, 'utf-8')
@@ -225,7 +287,7 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
 
       case 'zhifangsi_module_info': {
         const moduleName = String(args.module_name)
-        const wikiPath = path.join(targetDir, 'wiki', 'modules', `${moduleName}.md`)
+        const wikiPath = path.join(storage.wikiDir, 'modules', `${moduleName}.md`)
         let wikiContent = ''
         const explicitPaths: string[] = []
 
@@ -254,7 +316,7 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
 
         const text = [
           `# 模块详细档案: ${moduleName}`,
-          wikiContent ? `\n## 架构文档 (wiki/modules/${moduleName}.md)\n${wikiContent}` : '*暂无专门的 wiki 架构文档*',
+          wikiContent ? `\n## 架构文档 (${wikiPath})\n${wikiContent}` : '*暂无专门的 wiki 架构文档*',
           `\n## AST 实测拓扑与导出契约`,
           `- 匹配源码文件 (${moduleFiles.length}): ${moduleFiles.length > 0 ? moduleFiles.map((f) => `\`${f}\``).join(', ') : '未匹配到源码文件'}`,
           `- 直接下游依赖 (${dependencies.length}): ${dependencies.length > 0 ? dependencies.map((d) => `\`${d}\``).join(', ') : '无'}`,
@@ -272,12 +334,12 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
 
       case 'zhifangsi_workflow_trace': {
         const workflowName = String(args.workflow_name)
-        const flowPath = path.join(targetDir, 'wiki', 'workflows', `${workflowName}.md`)
+        const flowPath = path.join(storage.wikiDir, 'workflows', `${workflowName}.md`)
         let content = ''
         if (fs.existsSync(flowPath)) {
           content = fs.readFileSync(flowPath, 'utf-8')
         } else {
-          content = `未找到业务流档案: wiki/workflows/${workflowName}.md`
+          content = `未找到业务流档案: ${flowPath}`
         }
         return {
           content: [{ type: 'text', text: content }],
@@ -288,7 +350,11 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
         const query = String(args.query)
         const bridgeOnline = await bridge.isAvailable()
         if (bridgeOnline) {
-          const project = await bridge.findProjectByPath(targetDir)
+          const project =
+            (await bridge.findProjectByPath(targetDir)) ||
+            (storage.storageRoot !== storage.repoRoot
+              ? await bridge.findProjectByPath(storage.storageRoot)
+              : null)
           if (project) {
             const results = await bridge.search(project.id, query)
             if (results && results.hits?.length > 0) {
@@ -303,10 +369,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
 
         // Local Standalone Fallback: search local wiki/**/*.md + AST symbols
         const graph = buildWorkspaceGraph(targetDir)
-        const localHits = searchLocalWorkspace(targetDir, query, graph)
+        const localHits = searchLocalWorkspace(targetDir, query, graph, { wikiDir: storage.wikiDir })
         if (localHits.length > 0) {
           const text = [
-            `# 职方司检索结果 (来源: 本地 Wiki + AST 符号混合检索)`,
+            `# 职方司检索结果 (来源: 本地 Wiki + AST 符号混合检索 | 知识库: ${storage.wikiDir})`,
             ...localHits.map(
               (h) => `- **${h.title}** (\`${h.path}\`) [相关度: ${h.score}]\n  ${h.snippet}`
             ),
@@ -352,8 +418,11 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
 
       case 'zhifangsi_check_invariants': {
         const graph = buildWorkspaceGraph(targetDir)
-        const invariants = loadInvariantsFromWorkspace(targetDir)
-        const report = checkInvariants(invariants, graph, { rootDir: targetDir })
+        const invariants = loadInvariantsFromWorkspace(targetDir, { wikiDir: storage.wikiDir })
+        const report = checkInvariants(invariants, graph, {
+          rootDir: targetDir,
+          wikiDir: storage.wikiDir,
+        })
         const text = formatInvariantReport(report, { colored: false })
         return {
           content: [
@@ -363,6 +432,8 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
               text: JSON.stringify(
                 {
                   passed: report.passed,
+                  wikiDir: storage.wikiDir,
+                  storageMode: storage.mode,
                   totalInvariants: report.totalInvariants,
                   totalFilesChecked: report.totalFilesChecked,
                   totalViolations: report.totalViolations,
@@ -384,7 +455,9 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
         const hops = typeof args.hops === 'number' ? args.hops : 1
         if (target) {
           const graph = buildWorkspaceGraph(targetDir)
-          const text = generateNeighborhoodSkeleton(targetDir, target, graph, hops)
+          const text = generateNeighborhoodSkeleton(targetDir, target, graph, hops, {
+            wikiDir: storage.wikiDir,
+          })
           return { content: [{ type: 'text', text }] }
         } else {
           const res = generateCodebaseSkeleton(targetDir)
@@ -395,7 +468,7 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
       case 'zhifangsi_impact': {
         const files = Array.isArray(args.files) ? args.files.map(String) : [String(args.files || '')]
         const graph = buildWorkspaceGraph(targetDir)
-        const result = analyzeChangeImpact(targetDir, files, graph)
+        const result = analyzeChangeImpact(targetDir, files, graph, { wikiDir: storage.wikiDir })
         return {
           content: [
             { type: 'text', text: result.markdown },
@@ -407,13 +480,45 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
       case 'zhifangsi_bootstrap': {
         const force = Boolean(args.force)
         const graph = buildWorkspaceGraph(targetDir)
-        const res = bootstrapWikiModules(targetDir, graph, { force })
+        const res = bootstrapWikiModules(targetDir, graph, { force, wikiDir: wikiDirArg })
         const text = [
           `# 职方司冷启动模块聚类建档完成`,
+          `- 知识库位置: \`${res.wikiDir}\` (${res.storageMode})`,
           `- 新生成模块档案 (${res.modulesCreated.length}): ${res.modulesCreated.length > 0 ? res.modulesCreated.map((m) => `\`${m}\``).join(', ') : '无'}`,
           `- 已存在并跳过 (${res.modulesSkipped.length}): ${res.modulesSkipped.length > 0 ? res.modulesSkipped.map((m) => `\`${m}\``).join(', ') : '无'}`,
         ].join('\n')
         return { content: [{ type: 'text', text }] }
+      }
+
+      case 'zhifangsi_repos': {
+        const query = args.query ? String(args.query) : undefined
+        const vaultDir = args.vault_dir ? String(args.vault_dir) : undefined
+        const globalCfg = loadGlobalConfig()
+        const effectiveVault = vaultDir || process.env.ZHIFANGSI_VAULT_DIR || globalCfg.vaultDir
+        const entries = searchRepoRegistry(query, vaultDir)
+        const text = formatRepoRegistryReport(entries, {
+          query,
+          vaultDir: effectiveVault,
+          storageMode: globalCfg.storageMode,
+        })
+        return {
+          content: [
+            { type: 'text', text },
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  storageMode: globalCfg.storageMode,
+                  vaultDir: effectiveVault,
+                  totalMatches: entries.length,
+                  repos: entries,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        }
       }
 
       default:

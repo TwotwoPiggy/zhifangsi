@@ -39,6 +39,10 @@ const TOOL_DEFINITIONS = [
           description: '代码库根路径，缺省为当前工作目录',
           type: 'string',
         },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时按全局/项目配置自动解析（默认原位，支持集中外置）',
+          type: 'string',
+        },
         output_file: {
           description: '可选，舆图 Markdown 保存文件路径，如 CODEBASE_MAP.md',
           type: 'string',
@@ -55,6 +59,10 @@ const TOOL_DEFINITIONS = [
       properties: {
         target_dir: {
           description: '代码库根路径，缺省为当前工作目录',
+          type: 'string',
+        },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
           type: 'string',
         },
       },
@@ -75,6 +83,10 @@ const TOOL_DEFINITIONS = [
           description: '代码库根路径，缺省为当前工作目录',
           type: 'string',
         },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+          type: 'string',
+        },
       },
       required: ['module_name'],
     },
@@ -91,6 +103,10 @@ const TOOL_DEFINITIONS = [
         },
         target_dir: {
           description: '代码库根路径，缺省为当前工作目录',
+          type: 'string',
+        },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
           type: 'string',
         },
       },
@@ -110,6 +126,10 @@ const TOOL_DEFINITIONS = [
         },
         target_dir: {
           description: '代码库根路径，缺省为当前工作目录',
+          type: 'string',
+        },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
           type: 'string',
         },
       },
@@ -144,6 +164,10 @@ const TOOL_DEFINITIONS = [
           description: '代码库根路径，缺省为当前工作目录',
           type: 'string',
         },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+          type: 'string',
+        },
       },
     },
   },
@@ -163,6 +187,10 @@ const TOOL_DEFINITIONS = [
           description: '代码库根路径，缺省为当前工作目录',
           type: 'string',
         },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+          type: 'string',
+        },
       },
       required: ['files'],
     },
@@ -178,9 +206,31 @@ const TOOL_DEFINITIONS = [
           description: '代码库根路径，缺省为当前工作目录',
           type: 'string',
         },
+        wiki_dir: {
+          description: '可选，自定义知识库 wiki 目录路径；缺省时自动按配置解析',
+          type: 'string',
+        },
         force: {
           description: '是否覆盖已存在的模块档案，默认为 false',
           type: 'boolean',
+        },
+      },
+    },
+  },
+  {
+    name: 'zhifangsi_repos',
+    description:
+      '查询 L1 跨项目路由注册表（仅返回各项目的轻量名片：slug、源码路径、Wiki 路径、职责摘要与模块名，不加载完整 Wiki）。适用于 Super-agent Router 层先定位目标 Repo，再派发 Worker 进入目标 Repo 查 Wiki 与源码。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          description: '可选，按项目名、职责、技术栈、模块名或关键词筛选目标 Repo',
+          type: 'string',
+        },
+        vault_dir: {
+          description: '可选，指定集中外置 Vault 根目录（缺省使用全局配置）',
+          type: 'string',
         },
       },
     },
@@ -189,9 +239,10 @@ const TOOL_DEFINITIONS = [
 
 const INSTRUCTIONS_CONTENT = `# 兵部职方司 (Zhifangsi) MCP 工具使用指南
 
-职方司为代码库战略舆图与架构自愈引擎，专精于代码库静态拓扑、核心关隘识别与架构不变量守则核验。
+职方司为代码库战略舆图与架构自愈引擎，专精于代码库静态拓扑、核心关隘识别与架构不变量守则核验。支持默认原位（\`<repo>/wiki\`）与集中外置双存储模式。
 
 ## 核心工具使用时机
+0. **跨项目 L1 路由寻址（Super-agent Router 层）**：调用 \`zhifangsi_repos\` 仅检索轻量项目名片以定位目标 Repo 与 Wiki 路径，绝不预加载各 Repo 完整 Wiki。
 1. **全局架构探索**：调用 \`zhifangsi_map\` 快速测绘工程全景，获取 PageRank 权重最高的枢纽文件、循环依赖预警、已注册模块与守则状态。
 2. **存量工程冷启动建档**：调用 \`zhifangsi_bootstrap\` 基于 AST 目录拓扑自动生成 \`wiki/modules/*.md\` 模块档案。
 3. **局部邻域高密骨架（Inline & Spill）**：调用 \`zhifangsi_skeleton\` 传入 \`target\` 获取目标文件/模块骨架与 1 跳邻居契约，节省 85%+ Token。
@@ -430,7 +481,7 @@ export function runInstaller(rawArgs = []) {
 
 生效组件：
 1. \x1b[36mSkill 技能\x1b[0m: Antigravity 对话中自动具备职方司战略舆图思维；
-2. \x1b[36mMCP 军机工具\x1b[0m: 原生注入 9 大懒加载工具 (zhifangsi_*)；
+2. \x1b[36mMCP 军机工具\x1b[0m: 原生注入 ${TOOL_DEFINITIONS.length} 大懒加载工具 (zhifangsi_*)；
 3. \x1b[36mNode 绝对路径绑定\x1b[0m: ${nodePath} -> ${mcpServerScript}；
 4. \x1b[36m全局命令行\x1b[0m: 可在系统任何终端直接运行 \`zhifangsi map\` / \`zhifangsi check\` / \`zhifangsi bootstrap\` / \`zhifangsi impact\`。
 `)

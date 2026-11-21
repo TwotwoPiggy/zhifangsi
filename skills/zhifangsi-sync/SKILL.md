@@ -1,6 +1,6 @@
 ---
 name: zhifangsi-sync
-description: 将本地架构舆图增量同步至 LLM Wiki 桌面端 (127.0.0.1:19828) 并更新向量索引。
+description: 将本地架构舆图增量同步至 LLM Wiki 桌面端并更新向量索引。
 ---
 
 # zhifangsi-sync: 同步舆图至 LLM Wiki 桌面端

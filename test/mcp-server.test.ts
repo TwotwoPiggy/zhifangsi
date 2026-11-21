@@ -32,6 +32,7 @@ describe('Zhifangsi MCP Server & Tools', () => {
         'zhifangsi_skeleton',
         'zhifangsi_impact',
         'zhifangsi_bootstrap',
+        'zhifangsi_repos',
       ])
     )
   })

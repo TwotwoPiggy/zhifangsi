@@ -1,6 +1,6 @@
 ---
 name: zhifangsi-check
-description: 执行关防守则与架构不变量静态合规巡检，扫描越权调用、非法依赖与单向数据流违规。
+description: 执行关防守则与架构不变量合规巡检，扫描越权调用、循环依赖与舆图失真。
 ---
 
 # zhifangsi-check: 关防守则静态合规巡检

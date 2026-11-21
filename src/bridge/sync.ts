@@ -1,8 +1,9 @@
 import { LLMWikiBridge } from './client.js'
+import { resolveStoragePaths, type StorageResolveOptions } from '../config/storage.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
-export interface SyncOptions {
+export interface SyncOptions extends StorageResolveOptions {
   projectDir: string
   wikiDir?: string
 }
@@ -30,14 +31,21 @@ export async function syncToLLMWiki(options: SyncOptions, bridge = new LLMWikiBr
   }
 
   report.bridgeActive = true
-  const project = await bridge.findProjectByPath(options.projectDir)
+  const storage = resolveStoragePaths(options.projectDir, options)
+  const project =
+    (await bridge.findProjectByPath(options.projectDir)) ||
+    (storage.storageRoot !== storage.repoRoot
+      ? await bridge.findProjectByPath(storage.storageRoot)
+      : null)
   if (!project) {
-    report.errors.push(`Project at ${options.projectDir} is not open in LLM Wiki desktop`)
+    report.errors.push(
+      `Project at ${options.projectDir}${storage.storageRoot !== storage.repoRoot ? ` (or ${storage.storageRoot})` : ''} is not open in LLM Wiki desktop`
+    )
     return report
   }
 
   report.projectId = project.id
-  const wikiRoot = options.wikiDir || path.join(options.projectDir, 'wiki')
+  const wikiRoot = storage.wikiDir
 
   if (!fs.existsSync(wikiRoot)) {
     return report
