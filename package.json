@@ -6,8 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "zhifangsi": "./bin/zhifangsi.mjs",
-    "zhifangsi-mcp": "./bin/zhifangsi-mcp.mjs"
+    "zhifangsi": "bin/zhifangsi.mjs",
+    "zhifangsi-mcp": "bin/zhifangsi-mcp.mjs"
   },
   "files": [
     "bin",
