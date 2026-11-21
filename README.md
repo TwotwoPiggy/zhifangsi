@@ -314,7 +314,7 @@ zhifangsi/
 ├── wiki/
 │   └── invariants/             # 代码库自身架构关防守则规范文档
 ├── test/                       # 自动化测试套件 (Vitest, 28 tests)
-├── .github/workflows/          # CI 跨平台测试与 NPM 自动发布流水线
+├── .github/workflows/          # NPM 自动发布流水线 (publish.yml)
 ├── SKILL.md                    # 主 Skill 定义
 └── package.json
 ```
