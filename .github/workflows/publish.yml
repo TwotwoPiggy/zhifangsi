@@ -1,0 +1,36 @@
+name: Publish NPM Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
+      - name: Install Dependencies
+        run: npm install --no-audit || true
+
+      - name: Build, Run Unit Tests & Self Verification
+        run: |
+          npm run build
+          npm test
+          node ./bin/zhifangsi.mjs --version
+          node ./bin/zhifangsi.mjs map
+          node ./bin/zhifangsi.mjs check
+
+      - name: Publish to NPM
+        run: npm publish --provenance --access public

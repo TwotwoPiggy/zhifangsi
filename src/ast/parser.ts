@@ -10,6 +10,8 @@ export function detectLanguageFromPath(filePath: string): string {
   if (lower.endsWith('.py')) return 'python'
   if (lower.endsWith('.rs')) return 'rust'
   if (lower.endsWith('.go')) return 'go'
+  if (lower.endsWith('.java')) return 'java'
+  if (lower.endsWith('.cs')) return 'csharp'
   return 'unknown'
 }
 
@@ -69,8 +71,6 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
     }
 
     // 1. Imports and re-exports
-    // Bare import: import './side-effect'
-    // Import/export from: import/export ... from 'specifier'
     const importRegex = /\b(?:import\s+['"]([^'"]+)['"]|(?:import|export)\s+(?:type\s+)?([\s\S]*?)\s+from\s+['"]([^'"]+)['"])/g
     let importMatch: RegExpExecArray | null
     let foundImport = false
@@ -83,7 +83,6 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
 
       if (clause) {
         if (clause.startsWith('{')) {
-          // Destructured
           const inner = clause.replace(/^\{|\}$/g, '').trim()
           inner.split(',').forEach((s) => {
             const sym = s.trim().split(/\s+as\s+/)[0].trim()
@@ -94,7 +93,6 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
         } else if (clause === '*') {
           symbols.push('*')
         } else {
-          // Default or mixed default + destructured
           const parts = clause.split(',')
           parts.forEach((p) => {
             const clean = p.replace(/[{}]/g, '').trim()
@@ -154,7 +152,7 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
 
     let symbol: CodeSymbol | null = null
 
-    // Functions: function foo(...) or async function foo(...)
+    // Functions
     const fnMatch = statement.match(/^(?:async\s+)?function\s*(\*?\s*[a-zA-Z0-9_$]+)\s*\(([^)]*)\)/)
     if (fnMatch) {
       const name = fnMatch[1].trim()
@@ -167,7 +165,7 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
       }
     }
 
-    // Classes: class Foo ...
+    // Classes
     if (!symbol) {
       const classMatch = statement.match(/^class\s+([a-zA-Z0-9_$]+)(?:\s+extends\s+[^{]+|\s+implements\s+[^{]+)?/)
       if (classMatch) {
@@ -182,7 +180,7 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
       }
     }
 
-    // Interfaces: interface Foo ...
+    // Interfaces
     if (!symbol) {
       const ifaceMatch = statement.match(/^interface\s+([a-zA-Z0-9_$]+)/)
       if (ifaceMatch) {
@@ -197,7 +195,7 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
       }
     }
 
-    // Types: type Foo = ...
+    // Types
     if (!symbol) {
       const typeMatch = statement.match(/^type\s+([a-zA-Z0-9_$]+)(?:<[^>]+>)?\s*=/)
       if (typeMatch) {
@@ -212,7 +210,7 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
       }
     }
 
-    // Enums: enum Foo ...
+    // Enums
     if (!symbol) {
       const enumMatch = statement.match(/^(?:const\s+)?enum\s+([a-zA-Z0-9_$]+)/)
       if (enumMatch) {
@@ -227,7 +225,7 @@ export function parseTsJsAst(filePath: string, code: string): FileAstInfo {
       }
     }
 
-    // Variables / Arrow Functions: const foo = (...) => ...
+    // Variables / Arrow Functions
     if (!symbol) {
       const varMatch = statement.match(/^(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*(?::\s*[^=]+)?\s*=\s*(?:async\s*)?(?:\(([^)]*)\)|([a-zA-Z0-9_$]+))\s*=>/)
       if (varMatch) {
@@ -320,7 +318,7 @@ export function parsePythonAst(filePath: string, code: string): FileAstInfo {
 
     // 2. Top-level functions and classes (no indentation)
     if (!rawLine.startsWith(' ') && !rawLine.startsWith('\t')) {
-      const fnMatch = trimmed.match(/^def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/)
+      const fnMatch = trimmed.match(/^(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/)
       if (fnMatch) {
         const name = fnMatch[1]
         const isPublic = !name.startsWith('_')
@@ -386,7 +384,7 @@ export function parseRustAst(filePath: string, code: string): FileAstInfo {
         fromFile: filePath,
         rawSpecifier: path,
         importedSymbols: symbols,
-        isRelative: path.startsWith('super::') || path.startsWith('crate::'),
+        isRelative: path.startsWith('super::') || path.startsWith('crate::') || path.startsWith('self::'),
         line: lineNum,
       })
       continue
@@ -396,7 +394,7 @@ export function parseRustAst(filePath: string, code: string): FileAstInfo {
     const isPub = trimmed.startsWith('pub ') || trimmed.startsWith('pub(crate) ')
     let kind: SymbolKind | null = null
     let name: string | null = null
-    let signature = trimmed
+    const signature = trimmed
 
     if (/\b(?:async\s+)?fn\s+([a-zA-Z0-9_]+)/.test(trimmed)) {
       const match = trimmed.match(/\b(?:async\s+)?fn\s+([a-zA-Z0-9_]+)/)
@@ -433,6 +431,148 @@ export function parseRustAst(filePath: string, code: string): FileAstInfo {
 }
 
 /**
+ * Parse Go code for import statements, exported functions, structs, and interfaces.
+ */
+export function parseGoAst(filePath: string, code: string): FileAstInfo {
+  const lines = code.split(/\r?\n/)
+  const imports: ImportEdge[] = []
+  const exports: CodeSymbol[] = []
+  const declarations: CodeSymbol[] = []
+
+  let inImportBlock = false
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const rawLine = lines[idx]
+    const lineNum = idx + 1
+    const trimmed = rawLine.trim()
+
+    if (trimmed.startsWith('//') || trimmed.length === 0) continue
+
+    if (trimmed.startsWith('import (')) {
+      inImportBlock = true
+      continue
+    }
+    if (inImportBlock) {
+      if (trimmed === ')') {
+        inImportBlock = false
+        continue
+      }
+      const m = trimmed.match(/['"]([^'"]+)['"]/)
+      if (m) {
+        imports.push({
+          fromFile: filePath,
+          rawSpecifier: m[1],
+          importedSymbols: [m[1].split('/').pop() || m[1]],
+          isRelative: m[1].startsWith('.'),
+          line: lineNum,
+        })
+      }
+      continue
+    }
+
+    const singleImport = trimmed.match(/^import\s+(?:[a-zA-Z0-9_.]+\s+)?['"]([^'"]+)['"]/)
+    if (singleImport) {
+      imports.push({
+        fromFile: filePath,
+        rawSpecifier: singleImport[1],
+        importedSymbols: [singleImport[1].split('/').pop() || singleImport[1]],
+        isRelative: singleImport[1].startsWith('.'),
+        line: lineNum,
+      })
+      continue
+    }
+
+    const fnMatch = trimmed.match(/^func\s+(?:\([^)]+\)\s+)?([a-zA-Z0-9_]+)\s*\(([^)]*)\)/)
+    if (fnMatch) {
+      const name = fnMatch[1]
+      const isExported = /^[A-Z]/.test(name)
+      const sym: CodeSymbol = {
+        name,
+        kind: 'function',
+        signature: trimmed.split('{')[0].trim(),
+        exported: isExported,
+        line: lineNum,
+      }
+      declarations.push(sym)
+      if (isExported) exports.push(sym)
+      continue
+    }
+
+    const typeMatch = trimmed.match(/^type\s+([a-zA-Z0-9_]+)\s+(struct|interface)\b/)
+    if (typeMatch) {
+      const name = typeMatch[1]
+      const kind: SymbolKind = typeMatch[2] === 'interface' ? 'interface' : 'struct'
+      const isExported = /^[A-Z]/.test(name)
+      const sym: CodeSymbol = {
+        name,
+        kind,
+        signature: `type ${name} ${typeMatch[2]}`,
+        exported: isExported,
+        line: lineNum,
+      }
+      declarations.push(sym)
+      if (isExported) exports.push(sym)
+    }
+  }
+
+  return { filePath, language: 'go', exports, imports, declarations }
+}
+
+/**
+ * Parse Java / C# code for imports/usings and public classes/interfaces/methods.
+ */
+export function parseJvmDotNetAst(filePath: string, code: string): FileAstInfo {
+  const language = detectLanguageFromPath(filePath)
+  const lines = code.split(/\r?\n/)
+  const imports: ImportEdge[] = []
+  const exports: CodeSymbol[] = []
+  const declarations: CodeSymbol[] = []
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const rawLine = lines[idx]
+    const lineNum = idx + 1
+    const trimmed = rawLine.trim()
+
+    if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*') || trimmed.length === 0) continue
+
+    // Java: import com.example.foo.Bar; | C#: using MyNamespace.Services;
+    const impMatch = trimmed.match(/^(?:import|using)\s+(?:static\s+)?([a-zA-Z0-9_.*]+)\s*;/)
+    if (impMatch) {
+      const spec = impMatch[1]
+      const parts = spec.split('.')
+      imports.push({
+        fromFile: filePath,
+        rawSpecifier: spec,
+        importedSymbols: [parts[parts.length - 1]],
+        isRelative: false,
+        line: lineNum,
+      })
+      continue
+    }
+
+    const typeMatch = trimmed.match(/^(?:public\s+|internal\s+)?(?:abstract\s+|final\s+|sealed\s+|static\s+)*(class|interface|enum|record|struct)\s+([a-zA-Z0-9_]+)/)
+    if (typeMatch) {
+      const isPub = trimmed.startsWith('public ')
+      const rawKind = typeMatch[1]
+      const kind: SymbolKind =
+        rawKind === 'interface' ? 'interface' : rawKind === 'enum' ? 'enum' : rawKind === 'struct' ? 'struct' : 'class'
+      const name = typeMatch[2]
+      const sym: CodeSymbol = {
+        name,
+        kind,
+        signature: trimmed.split('{')[0].trim(),
+        exported: isPub,
+        line: lineNum,
+      }
+      declarations.push(sym)
+      if (isPub) exports.push(sym)
+    }
+  }
+
+  return { filePath, language, exports, imports, declarations }
+}
+
+/**
  * Universal dispatcher for parsing code based on file extension
  */
 export function parseSourceFileAst(filePath: string, code: string): FileAstInfo {
@@ -446,6 +586,12 @@ export function parseSourceFileAst(filePath: string, code: string): FileAstInfo 
   if (lang === 'rust') {
     return parseRustAst(filePath, code)
   }
+  if (lang === 'go') {
+    return parseGoAst(filePath, code)
+  }
+  if (lang === 'java' || lang === 'csharp') {
+    return parseJvmDotNetAst(filePath, code)
+  }
   return {
     filePath,
     language: lang,
@@ -455,17 +601,75 @@ export function parseSourceFileAst(filePath: string, code: string): FileAstInfo 
   }
 }
 
+function tryMatchCandidatePath(basePath: string, allFilesSet: Set<string>): string | null {
+  const baseCandidates = [basePath]
+  if (basePath.endsWith('.js')) {
+    baseCandidates.push(basePath.replace(/\.js$/, '.ts'))
+    baseCandidates.push(basePath.replace(/\.js$/, '.tsx'))
+    baseCandidates.push(basePath.replace(/\.js$/, ''))
+  } else if (basePath.endsWith('.jsx')) {
+    baseCandidates.push(basePath.replace(/\.jsx$/, '.tsx'))
+    baseCandidates.push(basePath.replace(/\.jsx$/, ''))
+  }
+
+  const candidateExtensions = [
+    '',
+    '.ts',
+    '.tsx',
+    '.js',
+    '.jsx',
+    '.mjs',
+    '.py',
+    '.rs',
+    '.go',
+    '.java',
+    '.cs',
+    '/index.ts',
+    '/index.tsx',
+    '/index.js',
+    '/__init__.py',
+    '/mod.rs',
+  ]
+
+  for (const base of baseCandidates) {
+    for (const ext of candidateExtensions) {
+      const candidate = `${base}${ext}`
+      if (allFilesSet.has(candidate)) {
+        return candidate
+      }
+    }
+  }
+
+  return null
+}
+
 /**
  * Resolves a relative import specifier into a canonical workspace path
  */
 export function resolveRelativeImport(fromFile: string, specifier: string, allFiles: string[]): string | null {
   if (!specifier.startsWith('.')) return null
 
-  // Normalize separators
+  const allFilesSet = new Set(allFiles)
   const normFrom = fromFile.replace(/\\/g, '/')
-  const fromDir = normFrom.substring(0, normFrom.lastIndexOf('/'))
+  const fromDir = normFrom.includes('/') ? normFrom.substring(0, normFrom.lastIndexOf('/')) : ''
 
-  // Resolve dot path
+  // Python relative import like ".local_module" or "..sub.helper"
+  if (normFrom.endsWith('.py') && /^\.+[a-zA-Z0-9_.]*$/.test(specifier) && !specifier.includes('/')) {
+    const dotMatch = specifier.match(/^(\.+)(.*)$/)
+    if (dotMatch) {
+      const dots = dotMatch[1].length
+      const rest = dotMatch[2]
+      const parts = fromDir ? fromDir.split('/') : []
+      for (let d = 1; d < dots; d++) {
+        parts.pop()
+      }
+      if (rest) {
+        parts.push(...rest.split('.'))
+      }
+      return tryMatchCandidatePath(parts.join('/'), allFilesSet)
+    }
+  }
+
   const parts = fromDir ? fromDir.split('/') : []
   const specParts = specifier.split('/')
 
@@ -479,26 +683,72 @@ export function resolveRelativeImport(fromFile: string, specifier: string, allFi
   }
 
   const basePath = parts.join('/')
-  const baseCandidates = [basePath]
-  if (basePath.endsWith('.js')) {
-    baseCandidates.push(basePath.replace(/\.js$/, '.ts'))
-    baseCandidates.push(basePath.replace(/\.js$/, '.tsx'))
-    baseCandidates.push(basePath.replace(/\.js$/, ''))
-  } else if (basePath.endsWith('.jsx')) {
-    baseCandidates.push(basePath.replace(/\.jsx$/, '.tsx'))
-    baseCandidates.push(basePath.replace(/\.jsx$/, ''))
+  return tryMatchCandidatePath(basePath, allFilesSet)
+}
+
+/**
+ * Resolves both relative imports and workspace path aliases (e.g. `@/...`, `~/...`, Python packages, Rust `crate::`, Java/C# packages)
+ */
+export function resolveWorkspaceImport(
+  fromFile: string,
+  specifier: string,
+  allFiles: string[],
+  aliasMap: Record<string, string> = {}
+): string | null {
+  if (specifier.startsWith('.')) {
+    return resolveRelativeImport(fromFile, specifier, allFiles)
   }
 
-  const candidateExtensions = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js']
+  const allFilesSet = new Set(allFiles)
 
-  for (const base of baseCandidates) {
-    for (const ext of candidateExtensions) {
-      const candidate = `${base}${ext}`
-      if (allFiles.includes(candidate)) {
-        return candidate
+  // 1. Custom aliasMap (e.g., from tsconfig.json paths)
+  for (const [prefix, targetPrefix] of Object.entries(aliasMap)) {
+    if (specifier.startsWith(prefix)) {
+      const rest = specifier.slice(prefix.length).replace(/^\//, '')
+      const mappedBase = targetPrefix ? `${targetPrefix.replace(/\/$/, '')}/${rest}` : rest
+      const matched = tryMatchCandidatePath(mappedBase, allFilesSet)
+      if (matched) return matched
+    }
+  }
+
+  // 2. Standard frontend/monolith aliases: @/xxx or ~/xxx -> src/xxx or xxx
+  if (specifier.startsWith('@/') || specifier.startsWith('~/')) {
+    const rest = specifier.slice(2)
+    const fromSrc = tryMatchCandidatePath(`src/${rest}`, allFilesSet)
+    if (fromSrc) return fromSrc
+    const fromRoot = tryMatchCandidatePath(rest, allFilesSet)
+    if (fromRoot) return fromRoot
+  }
+
+  // 3. Rust crate:: / super:: / self::
+  if (specifier.startsWith('crate::') || specifier.startsWith('super::') || specifier.startsWith('self::')) {
+    const clean = specifier.replace(/::\{.*\}$/, '')
+    if (clean.startsWith('crate::')) {
+      const segments = clean.slice('crate::'.length).split('::')
+      for (let len = segments.length; len >= 1; len--) {
+        const candidateBase = 'src/' + segments.slice(0, len).join('/')
+        const matched = tryMatchCandidatePath(candidateBase, allFilesSet)
+        if (matched) return matched
       }
     }
   }
 
-  return null
+  // 4. Python / Java / C# dotted module path (e.g., app.services.user -> app/services/user.py or src/app/services/user.py)
+  if (/^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)+$/.test(specifier)) {
+    const slashPath = specifier.replace(/\./g, '/')
+    for (const prefix of ['', 'src/', 'app/', 'src/main/java/']) {
+      const matched = tryMatchCandidatePath(`${prefix}${slashPath}`, allFilesSet)
+      if (matched) return matched
+      // In Python/Java, last segment might be a symbol/class imported from a module file
+      const lastSlash = slashPath.lastIndexOf('/')
+      if (lastSlash > 0) {
+        const parentModulePath = slashPath.slice(0, lastSlash)
+        const parentMatched = tryMatchCandidatePath(`${prefix}${parentModulePath}`, allFilesSet)
+        if (parentMatched) return parentMatched
+      }
+    }
+  }
+
+  // 5. Direct workspace root path (e.g. "src/utils/helper")
+  return tryMatchCandidatePath(specifier, allFilesSet)
 }

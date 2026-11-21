@@ -59,48 +59,96 @@
 
 ---
 
-## 📦 快速开始
+## 📦 快速开始与安装 (Installation)
 
-### 1. 安装与构建
+### 途径 A：通过 NPM 全局安装 / `npx` 一键接入（推荐）
+
+```bash
+# 1. 全局安装 zhifangsi CLI 与 MCP 服务
+npm install -g zhifangsi
+
+# 2. 一键将 Skills 与 9 大 MCP 军机工具注入 Antigravity（或直接运行 npx zhifangsi --antigravity）
+zhifangsi install --antigravity
+
+# 可选：为当前工程注入 VS Code / Qoder / Cursor / Claude Code 的 MCP 配置
+zhifangsi install --vscode
+zhifangsi install --qoder
+zhifangsi install --cursor
+```
+
+### 途径 B：通过 GitHub 远端源直接 NPM 安装
+
+若需直接拉取 GitHub 主干最新特性：
+
+```bash
+npm install -g git+https://github.com/TwotwoPiggy/zhifangsi.git
+zhifangsi install --antigravity
+```
+
+### 途径 C：本地源码构建与开发链接
 
 ```bash
 cd D:\Computers\AIDevelop\Tools\Skills\zhifangsi
 npm install
 npm run build
+npm link
+zhifangsi install --antigravity
 ```
 
-### 2. 运行单元测试（21/21 全通）
+### 🔄 升级与卸载
+
+```bash
+# 自动检测 NPM / GitHub 最新版本并原地升级 + 刷新宿主环境配置
+zhifangsi update
+
+# 从宿主环境中移除职方司 Skills 与 MCP 配置
+zhifangsi uninstall
+```
+
+### 🧪 运行单元测试与发布预检
 
 ```bash
 npm test
+npm run release:dry-run
 ```
 
 ---
 
 ## 💻 命令行手册 (CLI Usage)
 
-全局或直接使用 Node 执行 `bin/zhifangsi.mjs`：
+全局安装后可直接使用 `zhifangsi` 命令（或本地 `node ./bin/zhifangsi.mjs`）：
 
 ```bash
-# 1. 测绘代码库战略舆图（展示核心关隘、注册模块与关防守则状态）
-node ./bin/zhifangsi.mjs map [代码库路径]
+# 0. 将 Skills 与 MCP 配置注入宿主 IDE (--antigravity / --vscode / --qoder / --cursor / --all)
+zhifangsi install [--antigravity]
 
-# 2. 执行关防守则与架构不变量静态合规巡检（存在阻断级错误时返回退出码 1）
-node ./bin/zhifangsi.mjs check [代码库路径]
-# 别名: lint 或 invariants
-node ./bin/zhifangsi.mjs lint
+# 1. 原位初始化代码库 Codebase Map 架构契约 (生成 schema.md 及 wiki/ 目录)
+zhifangsi init [代码库路径] [--force]
 
-# 3. 提取代码骨架 (85%+ 压缩率，输出 codebase-skeleton.md)
-node ./bin/zhifangsi.mjs skeleton [代码库路径] [输出文件路径]
+# 2. 存量代码库冷启动自动建档 (基于 AST 目录拓扑逆向聚类生成 wiki/modules/*.md)
+zhifangsi bootstrap [代码库路径] [--force]
 
-# 4. 探测与 LLM Wiki 桌面端（127.0.0.1:19828）的桥接连接状态
-node ./bin/zhifangsi.mjs bridge
+# 3. 测绘代码库战略舆图（展示核心关隘、注册模块与关防守则状态）
+zhifangsi map [代码库路径] [输出文件路径]
 
-# 5. 将本地 wiki/ 架构文档同步至 LLM Wiki 桌面端向量索引
-node ./bin/zhifangsi.mjs sync [代码库路径]
+# 4. 执行关防守则与架构不变量静态合规巡检（存在阻断级错误时返回退出码 1）
+zhifangsi check [代码库路径]
 
-# 6. 启动 MCP 2.0 服务（供 IDE 与 Agent 通过 stdio 调用）
-node ./bin/zhifangsi.mjs mcp
+# 5. 提取代码骨架 (85%+ 压缩率，支持 --target <file|module> 局部邻域骨架)
+zhifangsi skeleton [代码库路径] [输出文件路径]
+zhifangsi skeleton [代码库路径] --target src/ast/dependency-graph.ts
+
+# 6. 评估变更爆炸半径、波及模块、回归业务流与核心关隘防撞车预警
+zhifangsi impact <file1,file2|module> [代码库路径]
+
+# 7. 探测与 LLM Wiki 桌面端（127.0.0.1:19828）的桥接连接状态
+zhifangsi bridge
+
+# 8. 将本地 wiki/ 架构文档同步至 LLM Wiki 桌面端向量索引
+zhifangsi sync [代码库路径]
+
+# 9. 启动 MCP 2.0 服务（供 IDE 与 Agent 通过 stdio 调用，亦可使用独立命令 zhifangsi-mcp）
+zhifangsi mcp
 ```
 
 ---
@@ -162,26 +210,28 @@ constraints:
 
 ### IDE 配置示例
 
+您可通过 `zhifangsi install --vscode` / `--qoder` / `--cursor` 一键生成，也可手动按如下方式配置：
+
 #### VS Code (`.vscode/mcp.json`)
 ```json
 {
   "servers": {
     "zhifangsi": {
       "type": "stdio",
-      "command": "node",
-      "args": ["D:/Computers/AIDevelop/Tools/Skills/zhifangsi/dist/mcp/server.js"]
+      "command": "npx",
+      "args": ["-y", "zhifangsi", "mcp"]
     }
   }
 }
 ```
 
-#### Qoder (`.mcp.json`)
+#### Qoder / Claude Code (`.mcp.json`)
 ```json
 {
   "mcpServers": {
     "zhifangsi": {
-      "command": "node",
-      "args": ["D:/Computers/AIDevelop/Tools/Skills/zhifangsi/dist/mcp/server.js"]
+      "command": "npx",
+      "args": ["-y", "zhifangsi", "mcp"]
     }
   }
 }

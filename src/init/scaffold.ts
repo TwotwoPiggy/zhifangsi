@@ -1,5 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import type { DependencyGraph } from '../ast/dependency-graph.js'
 
 export interface InitProjectOptions {
   projectName?: string
@@ -15,6 +16,11 @@ export interface InitProjectResult {
   skippedFiles: string[]
   schemaPath: string
   wikiPath: string
+}
+
+export interface BootstrapModulesResult {
+  modulesCreated: string[]
+  modulesSkipped: string[]
 }
 
 function detectProjectInfo(targetDir: string): { name: string; techStack: string } {
@@ -114,6 +120,7 @@ state_changes: []                # 核心持久化状态变更
 ### Invariant (关防守则 / 不变量专属字段)
 \`\`\`yaml
 severity: error | warning        # 违规严重级别
+status: active | draft           # 守则状态 (draft 为试运行草稿，不阻断构建)
 rules:                           # 自然语言守则声明
   - "禁止在 UI 组件层直接发起底层 DB 或跨层网络请求"
 affected_modules: []             # 受此守则约束的模块页面 [[wiki/modules/xxx]]
@@ -243,6 +250,7 @@ export function generateSampleInvariantContent(): string {
 type: invariant
 title: 架构分层解耦与单向依赖守则
 severity: error
+status: active
 rules:
   - "表现层或外层组件严禁直接绕过服务层穿透底层持久化/数据库"
   - "模块间只允许通过公开接口或依赖注入调用，禁止循环依赖"
@@ -279,7 +287,6 @@ export function initWikiProject(
   const createdDirs: string[] = []
   const skippedFiles: string[] = []
 
-  // Required directories for Codebase Map & LLM Wiki
   const requiredDirs = [
     'raw/sources',
     'raw/assets',
@@ -318,22 +325,12 @@ export function initWikiProject(
     createdFiles.push(relPath)
   }
 
-  // 1. schema.md
   writeFileSafe('schema.md', generateSchemaContent())
-
-  // 2. purpose.md
   writeFileSafe('purpose.md', generatePurposeContent(projectName, techStack))
-
-  // 3. wiki/index.md
   writeFileSafe('wiki/index.md', generateIndexContent())
-
-  // 4. wiki/overview.md
   writeFileSafe('wiki/overview.md', generateOverviewContent(projectName))
-
-  // 5. wiki/log.md
   writeFileSafe('wiki/log.md', generateLogContent())
 
-  // 6. Sample invariant
   if (options.createSampleInvariant !== false) {
     writeFileSafe(
       'wiki/invariants/001-unidirectional-flow.md',
@@ -341,7 +338,6 @@ export function initWikiProject(
     )
   }
 
-  // 7. Obsidian integration files
   if (options.withObsidian !== false) {
     const obsidianApp = {
       attachmentFolderPath: 'raw/assets',
@@ -379,4 +375,129 @@ export function initWikiProject(
     schemaPath: path.join(root, 'schema.md'),
     wikiPath: path.join(root, 'wiki'),
   }
+}
+
+/**
+ * 存量代码库冷启动自动建档：根据 AST 目录结构自动聚类生成 wiki/modules/*.md
+ */
+export function bootstrapWikiModules(
+  targetDir: string,
+  graph: DependencyGraph,
+  options: { force?: boolean } = {}
+): BootstrapModulesResult {
+  const root = path.resolve(targetDir)
+  const modulesDir = path.join(root, 'wiki', 'modules')
+  if (!fs.existsSync(modulesDir)) {
+    fs.mkdirSync(modulesDir, { recursive: true })
+  }
+
+  const allFiles = graph.getAllFiles()
+  const pageRanks = graph.computePageRank()
+  const today = new Date().toISOString().slice(0, 10)
+
+  // Group files into logical modules by directory (e.g., src/<mod>/... or top-level <mod>/...)
+  const groups = new Map<string, { dirPath: string; files: string[] }>()
+
+  for (const fileInfo of allFiles) {
+    const parts = fileInfo.filePath.split('/')
+    let modName = ''
+    let dirPath = ''
+
+    if (parts[0] === 'src' && parts.length >= 3) {
+      modName = parts[1]
+      dirPath = `src/${parts[1]}`
+    } else if (parts.length >= 2 && parts[0] !== 'test' && parts[0] !== 'tests') {
+      modName = parts[0] === 'src' ? path.basename(parts[1], path.extname(parts[1])) : parts[0]
+      dirPath = parts[0] === 'src' ? fileInfo.filePath : parts[0]
+    }
+
+    if (!modName || modName === 'index') continue
+    const slug = modName.toLowerCase().replace(/[^a-z0-9_-]/g, '-')
+
+    if (!groups.has(slug)) {
+      groups.set(slug, { dirPath, files: [] })
+    }
+    groups.get(slug)!.files.push(fileInfo.filePath)
+  }
+
+  // Map file -> module slug for cross-module dependency resolution
+  const fileToModule = new Map<string, string>()
+  for (const [slug, group] of groups.entries()) {
+    for (const f of group.files) {
+      fileToModule.set(f, slug)
+    }
+  }
+
+  const modulesCreated: string[] = []
+  const modulesSkipped: string[] = []
+
+  for (const [slug, group] of groups.entries()) {
+    const outPath = path.join(modulesDir, `${slug}.md`)
+    if (fs.existsSync(outPath) && !options.force) {
+      modulesSkipped.push(`wiki/modules/${slug}.md`)
+      continue
+    }
+
+    // Sort module files by PageRank descending to pick top entrypoints
+    const sortedFiles = [...group.files].sort(
+      (a, b) => (pageRanks.get(b) || 0) - (pageRanks.get(a) || 0)
+    )
+    const entrypoints = sortedFiles.slice(0, 3)
+
+    // Collect exported symbol names & signatures
+    const exportNames: string[] = []
+    const exportSignatures: string[] = []
+    for (const f of sortedFiles) {
+      const info = graph.getFileInfo(f)
+      if (!info) continue
+      for (const exp of info.exports) {
+        if (!exportNames.includes(exp.name)) {
+          exportNames.push(exp.name)
+          exportSignatures.push(`- \`${exp.signature}\` (\`${f}:${exp.line}\`)`)
+        }
+      }
+    }
+
+    // Collect cross-module dependencies
+    const depModules = new Set<string>()
+    for (const f of group.files) {
+      for (const targetFile of graph.getDependencies(f)) {
+        const targetMod = fileToModule.get(targetFile)
+        if (targetMod && targetMod !== slug) {
+          depModules.add(`[[modules/${targetMod}]]`)
+        }
+      }
+    }
+
+    const md = [
+      `---`,
+      `type: module`,
+      `title: ${slug} 模块`,
+      `path: "${group.dirPath}"`,
+      `entrypoints: [${entrypoints.map((e) => `"${e}"`).join(', ')}]`,
+      `exports: [${exportNames.slice(0, 15).map((e) => `"${e}"`).join(', ')}]`,
+      `dependencies: [${Array.from(depModules).map((d) => `"${d}"`).join(', ')}]`,
+      `created: ${today}`,
+      `updated: ${today}`,
+      `---`,
+      ``,
+      `# ${slug} 模块架构档案`,
+      ``,
+      `> 本档案由职方司 (\`zhifangsi bootstrap\`) 基于 AST 拓扑逆向聚类生成。`,
+      ``,
+      `## 1. 模块位置与核心入口`,
+      `- **源码路径**: \`${group.dirPath}\` (包含 ${group.files.length} 个源码文件)`,
+      `- **核心枢纽入口**: ${entrypoints.map((e) => `\`${e}\``).join(', ')}`,
+      `- **跨模块依赖**: ${depModules.size > 0 ? Array.from(depModules).join(', ') : '无外部模块依赖'}`,
+      ``,
+      `## 2. 公共导出契约 (Exported APIs)`,
+      ...(exportSignatures.length > 0 ? exportSignatures.slice(0, 25) : ['*该模块暂无显式公共导出符号*']),
+      ``,
+    ].join('\n')
+
+    fs.writeFileSync(outPath, md, 'utf-8')
+    modulesCreated.push(`wiki/modules/${slug}.md`)
+  }
+
+  return { modulesCreated, modulesSkipped }
 }

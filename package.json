@@ -1,24 +1,49 @@
 {
   "name": "zhifangsi",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "职方司 (zhifangsi) - 基于三省六部体系的代码库战略舆图、关防守则与自愈架构引擎 (支持独立运行与 LLM Wiki 桌面端联动双模)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "zhifangsi": "./bin/zhifangsi.mjs"
+    "zhifangsi": "./bin/zhifangsi.mjs",
+    "zhifangsi-mcp": "./bin/zhifangsi-mcp.mjs"
   },
+  "files": [
+    "bin",
+    "dist",
+    "scripts",
+    "skills",
+    "wiki",
+    "SKILL.md",
+    "README.md",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/TwotwoPiggy/zhifangsi.git"
   },
+  "bugs": {
+    "url": "https://github.com/TwotwoPiggy/zhifangsi/issues"
+  },
+  "homepage": "https://github.com/TwotwoPiggy/zhifangsi#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "start": "node ./bin/zhifangsi.mjs",
-    "install:antigravity": "node ./scripts/install-antigravity.mjs"
+    "install:antigravity": "node ./scripts/install-antigravity.mjs",
+    "release": "node scripts/release.mjs",
+    "release:dry-run": "node scripts/release.mjs --dry-run",
+    "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major",
+    "pack:dry": "npm pack --dry-run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0"

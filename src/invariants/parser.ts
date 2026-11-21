@@ -3,9 +3,7 @@ import type {
   InvariantConstraint,
   InvariantDefinition,
   InvariantSeverity,
-  DenyImportConstraint,
-  AllowOnlyConstraint,
-  IsolatedModuleConstraint,
+  InvariantStatus,
 } from './types.js'
 
 /**
@@ -42,7 +40,6 @@ export function parseSimpleYaml(yamlText: string): Record<string, any> {
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i]
-    // 忽略纯注释或空行
     const lineWithoutComment = rawLine.replace(/\s+#.*$/, '')
     const trimmed = lineWithoutComment.trim()
     if (!trimmed || trimmed.startsWith('#')) continue
@@ -53,7 +50,6 @@ export function parseSimpleYaml(yamlText: string): Record<string, any> {
     if (trimmed.startsWith('- ')) {
       const listContent = trimmed.slice(2).trim()
 
-      // 检查是否属于对象内部的嵌套子列表 (如 disallowed: 下的 - item)
       if (currentSubList && indent > currentListIndent) {
         currentSubList.push(parseYamlValue(listContent))
         continue
@@ -68,7 +64,6 @@ export function parseSimpleYaml(yamlText: string): Record<string, any> {
       }
 
       if (listContent.includes(':') && !listContent.startsWith('{') && !listContent.startsWith('[')) {
-        // 列表中的对象: - from: "..." 或 - type: deny_import
         currentObjectInList = {}
         const [k, ...vParts] = listContent.split(':')
         const kClean = k.trim()
@@ -76,14 +71,13 @@ export function parseSimpleYaml(yamlText: string): Record<string, any> {
         currentObjectInList[kClean] = vClean
         currentList?.push(currentObjectInList)
       } else {
-        // 普通标量列表项: - "some text"
         currentObjectInList = null
         currentList?.push(parseYamlValue(listContent))
       }
       continue
     }
 
-    // 2. 列表中对象的后续属性 (如 4 空格缩进 key: value)
+    // 2. 列表中对象的后续属性
     if (currentObjectInList && indent >= 4 && trimmed.includes(':')) {
       const [subK, ...subVParts] = trimmed.split(':')
       const subKey = subK.trim()
@@ -91,7 +85,6 @@ export function parseSimpleYaml(yamlText: string): Record<string, any> {
       const subVal = parseYamlValue(rawVal)
 
       if (rawVal === '') {
-        // 接下来为嵌套列表
         currentSubList = []
         currentObjectInList[subKey] = currentSubList
       } else {
@@ -115,7 +108,6 @@ export function parseSimpleYaml(yamlText: string): Record<string, any> {
       currentKey = key
 
       if (!valueStr) {
-        // 接下来可能是列表或对象
         root[key] = []
         currentList = root[key]
       } else {
@@ -128,13 +120,12 @@ export function parseSimpleYaml(yamlText: string): Record<string, any> {
 }
 
 /**
- * 解析 YAML 标量或内联 JSON 结构（如 ["a", "b"] 或 { from: "a" }）
+ * 解析 YAML 标量或内联 JSON 结构
  */
 function parseYamlValue(val: string): any {
   val = val.trim()
   if (!val) return ''
 
-  // 内联数组: ["a", "b"]
   if (val.startsWith('[') && val.endsWith(']')) {
     const inner = val.slice(1, -1).trim()
     if (!inner) return []
@@ -144,7 +135,6 @@ function parseYamlValue(val: string): any {
       .filter((item) => item !== '')
   }
 
-  // 内联对象: { a: 1, b: "2" }
   if (val.startsWith('{') && val.endsWith('}')) {
     const inner = val.slice(1, -1).trim()
     const obj: Record<string, any> = {}
@@ -159,12 +149,10 @@ function parseYamlValue(val: string): any {
     return obj
   }
 
-  // 引号包裹的字符串
   if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
     return val.slice(1, -1)
   }
 
-  // 布尔值与数字
   if (val.toLowerCase() === 'true') return true
   if (val.toLowerCase() === 'false') return false
   if (!isNaN(Number(val)) && val !== '') return Number(val)
@@ -254,6 +242,14 @@ export function normalizeConstraints(rawConstraints: any[] = []): InvariantConst
         })
       }
     }
+    // 格式 4: { type: 'no_circular_dependency', scope?: '...' }
+    else if (raw.type === 'no_circular_dependency') {
+      result.push({
+        type: 'no_circular_dependency',
+        scope: raw.scope || '**',
+        message: raw.message || '禁止模块/文件之间出现循环依赖环',
+      })
+    }
   }
 
   return result
@@ -261,10 +257,6 @@ export function normalizeConstraints(rawConstraints: any[] = []): InvariantConst
 
 /**
  * 从文本规则 (rules 字段) 中智能推断静态约束
- * 例如:
- * - "禁止在 src/components/* 中直接引用 src/db/*"
- * - "src/components/* 只能依赖 src/stores/*，严禁反向依赖"
- * - "deny: from src/ui/** to src/db/**"
  */
 export function inferConstraintsFromRules(rules: string[] = []): InvariantConstraint[] {
   const inferred: InvariantConstraint[] = []
@@ -314,7 +306,6 @@ export function inferConstraintsFromRules(rules: string[] = []): InvariantConstr
     if (reverseMatch) {
       const from = reverseMatch[1]
       const allowed = reverseMatch[2]
-      // 反向依赖禁止: allowed 严禁导入 from
       inferred.push({
         type: 'deny_import',
         from: allowed,
@@ -330,7 +321,7 @@ export function inferConstraintsFromRules(rules: string[] = []): InvariantConstr
       inferred.push({
         type: 'allow_only',
         from: allowOnlyMatch[1],
-        allowed: [allowOnlyMatch[2], allowOnlyMatch[1]], // 允许同层或指定层
+        allowed: [allowOnlyMatch[2], allowOnlyMatch[1]],
         message: rule,
       })
       continue
@@ -350,6 +341,7 @@ export function parseInvariantFile(filePath: string, fileContent: string): Invar
   const id = data.id || defaultId
   const title = data.title || id
   const severity: InvariantSeverity = data.severity === 'warning' ? 'warning' : 'error'
+  const status: InvariantStatus = data.status === 'draft' ? 'draft' : 'active'
 
   const rules: string[] = Array.isArray(data.rules)
     ? data.rules.map(String)
@@ -361,13 +353,9 @@ export function parseInvariantFile(filePath: string, fileContent: string): Invar
     ? data.affected_modules.map(String)
     : []
 
-  // 1. 显式声明的 constraints
   const explicitConstraints = normalizeConstraints(Array.isArray(data.constraints) ? data.constraints : [])
-
-  // 2. 从 rules 中智能推断的 constraints
   const inferredConstraints = inferConstraintsFromRules(rules)
 
-  // 合并约束 (去重)
   const constraints = [...explicitConstraints]
   for (const inf of inferredConstraints) {
     const exists = constraints.some(
@@ -387,6 +375,7 @@ export function parseInvariantFile(filePath: string, fileContent: string): Invar
     type: 'invariant',
     title,
     severity,
+    status,
     description: data.description || '',
     rules,
     affected_modules,

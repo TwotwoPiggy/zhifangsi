@@ -3,8 +3,8 @@ name: zhifangsi
 description: >-
   兵部职方司 (Zhifangsi) - 基于三省六部体系的代码库战略舆图与架构自愈引擎。
   支持单机独立模式与 LLM Wiki 桌面端（127.0.0.1:19828）联动双模。
-  提供 AST 确定性拓扑测绘、PageRank 核心关隘识别、代码骨架压缩（85%+）、
-  模块契约检索与业务流时序追踪。适用于 Antigravity、Qoder、VS Code Copilot、Claude Code 等 AI Agent。
+  提供 AST 确定性拓扑测绘、PageRank 核心关隘识别、局部邻域代码骨架压缩（85%+）、
+  变更爆炸半径与防撞车评估、存量代码库逆向冷启动建档、模块契约检索与业务流时序追踪。
 ---
 
 # 兵部职方清吏司 (Zhifangsi)
@@ -24,7 +24,7 @@ description: >-
 
 1. **单机独立模式 (Standalone Mode)**：
    - 零依赖、秒级启动；
-   - 依赖本地确定性 AST 解析（Tree-Sitter / 语法分析）与 Markdown 架构文件；
+   - 依赖本地确定性 AST 解析（支持 TS/JS/Python/Rust/Go/Java/C#，含 `@/` 别名、包路径与循环依赖环检测）、本地 Wiki + AST 导出符号混合检索；
    - 适用于命令行快速分析与没有开启桌面端的情况。
 
 2. **LLM Wiki 桌面联动模式 (Bridge Mode)**：
@@ -39,25 +39,38 @@ description: >-
 ## 二、 命令行指令 (CLI Reference)
 
 ```bash
+# 0. 安装/升级/卸载与宿主 IDE 集成 (支持 NPM 全局或 npx)
+npm install -g zhifangsi
+zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--all]
+zhifangsi update [--git]
+zhifangsi uninstall
+
 # 1. 原位初始化代码库 Codebase Map 架构契约与 Wiki 目录 (生成 schema.md 与 wiki/)
 zhifangsi init [目标路径] [--force]
 
-# 2. 测绘当前代码库战略舆图 (输出节点数、边数、Top PageRank 核心关隘文件)
-zhifangsi map [目标路径]
+# 2. 存量代码库冷启动自动建档 (基于 AST 目录拓扑逆向聚类生成 wiki/modules/*.md)
+zhifangsi bootstrap [目标路径] [--force]
 
-# 3. 提取代码高信息密度骨架 (剥离函数体，保留接口与签名，降噪 85%+)
+# 3. 测绘当前代码库战略舆图 (输出节点数、边数、Top PageRank 核心关隘文件与循环依赖预警)
+zhifangsi map [目标路径] [输出文件.md]
+
+# 4. 提取代码高信息密度骨架 (支持 --target <file|module> 局部邻域 Inline & Spill 提取)
 zhifangsi skeleton [目标路径] [输出文件.md]
+zhifangsi skeleton [目标路径] --target src/ast/dependency-graph.ts
 
-# 4. 执行关防守则与架构不变量合规巡检 (阻断跨层越权与非法依赖)
+# 5. 评估拟修改文件的变更爆炸半径、波及模块、回归业务流与高危关隘防撞车预警
+zhifangsi impact <file1,file2|module> [目标路径]
+
+# 6. 执行关防守则、循环依赖与 Wiki 舆图失真 (Drift) 静态合规巡检 (支持 status: draft 试运行)
 zhifangsi check [目标路径]
 
-# 5. 探测与 LLM Wiki 桌面端的桥接状态
+# 7. 探测与 LLM Wiki 桌面端的桥接状态
 zhifangsi bridge
 
-# 6. 将本地 wiki 页面增量同步给 LLM Wiki 桌面端建立向量索引
+# 8. 将本地 wiki 页面增量同步给 LLM Wiki 桌面端建立向量索引
 zhifangsi sync [目标路径]
 
-# 7. 启动标准 stdio MCP 服务
+# 9. 启动标准 stdio MCP 服务
 zhifangsi mcp
 ```
 
@@ -65,11 +78,14 @@ zhifangsi mcp
 
 ## 三、 MCP 工具清单 (面向 AI Agent)
 
-- **`zhifangsi_map`**：获取全库模块、工作流、不变量与 ADR 战略总图及健康状态。
-- **`zhifangsi_check_invariants`**：对代码库执行关防守则合规巡检，扫描越权调用、非法依赖与单向数据流违规。
-- **`zhifangsi_module_info`**：查询特定模块的职责、导出 API 与双链拓扑。
+- **`zhifangsi_map`**：获取全库模块、工作流、不变量、循环依赖预警与核心关隘（Hubs）战略总图。
+- **`zhifangsi_check_invariants`**：对代码库执行关防守则合规巡检，扫描越权调用、非法依赖、循环依赖及 Wiki 舆图失真（Drift），支持 `status: draft` 草稿守则试运行。
+- **`zhifangsi_module_info`**：查询特定模块（支持模块名或目录路径）的职责、导出 API 签名契约与深度依赖影响范围。
+- **`zhifangsi_skeleton`**：基于局部性原理（Inline & Spill）提取目标文件/模块的骨架与 1 跳邻居导出契约（或全库骨架）。
+- **`zhifangsi_impact`**：评估拟修改文件的变更爆炸半径、波及模块、建议回归验证的业务流（Workflows）及高危关隘防撞车预警。
+- **`zhifangsi_bootstrap`**：存量代码库基于 AST 目录拓扑一键逆向聚类生成 `wiki/modules/*.md` 档案。
 - **`zhifangsi_workflow_trace`**：追踪特定业务流的端到端调用时序与阶段步骤。
-- **`zhifangsi_search`**：混合语义检索（自动优先借力桌面端向量库）。
+- **`zhifangsi_search`**：混合语义检索（桌面端在线走 LanceDB，离线自动走本地 Wiki + AST 导出符号混合检索）。
 - **`zhifangsi_bridge_status`**：检查与 LLM Wiki 桌面端的联动状态。
 
 ---
