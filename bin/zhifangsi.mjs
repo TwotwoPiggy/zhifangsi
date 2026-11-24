@@ -3,7 +3,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
-import { execSync } from 'child_process'
 import {
   buildWorkspaceGraph,
   formatZhifangsiMap,
@@ -20,6 +19,7 @@ import { syncToLLMWiki } from '../dist/bridge/sync.js'
 import { generateCodebaseSkeleton } from '../dist/ast/skeletonizer.js'
 import { runZhifangsiMcpServer } from '../dist/mcp/server.js'
 import { initWikiProject, bootstrapWikiModules } from '../dist/init/scaffold.js'
+import { onboardWikiWorkspace, formatOnboardReport } from '../dist/mcp/onboard.js'
 import {
   getDefaultConfigPath,
   loadGlobalConfig,
@@ -33,6 +33,7 @@ import {
   formatRepoRegistryReport,
 } from '../dist/config/storage.js'
 import { runInstaller } from '../scripts/install-antigravity.mjs'
+import { runUpdater } from '../scripts/zhifangsi-update.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -47,25 +48,6 @@ function getLocalVersion() {
   }
 }
 
-async function getRemoteNpmVersion(pkgName = 'zhifangsi') {
-  try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3500)
-    const res = await fetch(`https://registry.npmjs.org/${pkgName}/latest`, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json' },
-    })
-    clearTimeout(timeoutId)
-    if (res.ok) {
-      const data = await res.json()
-      if (data && data.version) return String(data.version).trim()
-    }
-  } catch {
-    // ignore
-  }
-  return null
-}
-
 const args = process.argv.slice(2)
 let command = args[0] || 'help'
 
@@ -76,6 +58,11 @@ function parseCommandArgs(rawArgs) {
   const positional = []
   const flags = {
     force: false,
+    minimal: false,
+    noBootstrap: false,
+    noPrep: false,
+    noMap: false,
+    noSync: false,
     wikiDir: undefined,
     vaultDir: undefined,
     storageMode: undefined,
@@ -88,6 +75,16 @@ function parseCommandArgs(rawArgs) {
     const token = rawArgs[i]
     if (token === '--force' || token === '-f') {
       flags.force = true
+    } else if (token === '--minimal' || token === '--scaffold-only') {
+      flags.minimal = true
+    } else if (token === '--no-bootstrap') {
+      flags.noBootstrap = true
+    } else if (token === '--no-prep') {
+      flags.noPrep = true
+    } else if (token === '--no-map') {
+      flags.noMap = true
+    } else if (token === '--no-sync') {
+      flags.noSync = true
     } else if (token === '--centralized') {
       flags.storageMode = 'centralized'
     } else if (token === '--local') {
@@ -159,27 +156,10 @@ async function main() {
 
     case 'update':
     case 'upgrade': {
-      const localVer = getLocalVersion()
-      const useGit = args.includes('--git')
-      console.log(`\x1b[36m[职方司]\x1b[0m 当前本地版本: v${localVer}，正在检查更新...`)
-
-      const remoteVer = useGit ? null : await getRemoteNpmVersion('zhifangsi')
-      if (remoteVer) {
-        if (remoteVer === localVer && !args.includes('--force')) {
-          console.log(`\x1b[32m✔ 当前已是 NPM 最新版本 (v${localVer})！\x1b[0m`)
-          runInstaller(['--antigravity'])
-          break
-        }
-        console.log(`\x1b[36m[职方司]\x1b[0m 发现 NPM 最新版本 v${remoteVer}，正在通过 NPM 全局升级...`)
-        execSync('npm install -g zhifangsi@latest', { stdio: 'inherit' })
-      } else {
-        const repoUrl = 'git+https://github.com/TwotwoPiggy/zhifangsi.git'
-        console.log(`\x1b[33m[提示]\x1b[0m 正在从 GitHub 远端源 (${repoUrl}) 拉取最新稳定版并全局安装...`)
-        execSync(`npm install -g ${repoUrl}`, { stdio: 'inherit' })
+      const result = await runUpdater(args.slice(1))
+      if (result && result.exitCode) {
+        process.exitCode = result.exitCode
       }
-
-      console.log(`\x1b[36m[职方司]\x1b[0m 正在同步更新宿主环境 Skills 与 MCP 工具配置...`)
-      runInstaller(['--antigravity'])
       break
     }
 
@@ -310,21 +290,37 @@ async function main() {
     case 'init': {
       const { positional, flags, storageOptions } = parseCommandArgs(args.slice(1))
       const targetDir = path.resolve(positional[0] || process.cwd())
-      console.log(`\x1b[36m[职方司]\x1b[0m 正在初始化 Codebase Map 架构契约与 Wiki 目录: ${targetDir}...`)
-      const result = initWikiProject(targetDir, { ...storageOptions, force: flags.force })
-      console.log(`\x1b[32m✔ 初始化完成:\x1b[0m 项目「${result.projectName}」 (模式: ${result.storageMode})`)
-      console.log(`  - 源码仓库: ${result.repoRoot}`)
-      console.log(`  - 架构契约: ${result.schemaPath}`)
-      console.log(`  - 知识库根目录: ${result.wikiPath}`)
-      if (result.createdFiles.length > 0) {
-        console.log(`  已生成架构文件 (${result.createdFiles.length} 个):`)
-        result.createdFiles.forEach((f) => console.log(`    + ${f}`))
+
+      if (flags.minimal) {
+        console.log(`\x1b[36m[职方司]\x1b[0m 正在初始化 Codebase Map 架构契约与 Wiki 目录 (极简模式): ${targetDir}...`)
+        const result = initWikiProject(targetDir, { ...storageOptions, force: flags.force })
+        console.log(`\x1b[32m✔ 初始化完成:\x1b[0m 项目「${result.projectName}」 (模式: ${result.storageMode})`)
+        console.log(`  - 源码仓库: ${result.repoRoot}`)
+        console.log(`  - 架构契约: ${result.schemaPath}`)
+        console.log(`  - 知识库根目录: ${result.wikiPath}`)
+        if (result.createdFiles.length > 0) {
+          console.log(`  已生成架构文件 (${result.createdFiles.length} 个):`)
+          result.createdFiles.forEach((f) => console.log(`    + ${f}`))
+        }
+        if (result.skippedFiles.length > 0) {
+          console.log(`  已存在并跳过文件 (${result.skippedFiles.length} 个，使用 --force 覆盖):`)
+          result.skippedFiles.forEach((f) => console.log(`    - ${f}`))
+        }
+        console.log(`\n\x1b[32m✔ 现在可在 LLM Wiki 桌面端直接「打开项目 (Open Project)」挂载 ${result.storageRoot}！\x1b[0m`)
+        break
       }
-      if (result.skippedFiles.length > 0) {
-        console.log(`  已存在并跳过文件 (${result.skippedFiles.length} 个，使用 --force 覆盖):`)
-        result.skippedFiles.forEach((f) => console.log(`    - ${f}`))
-      }
-      console.log(`\n\x1b[32m✔ 现在可在 LLM Wiki 桌面端直接「打开项目 (Open Project)」挂载 ${result.storageRoot}！\x1b[0m`)
+
+      console.log(`\x1b[36m[职方司]\x1b[0m 正在一键初始化架构知识库并准备 LLM Wiki 接入: ${targetDir}...`)
+      const result = await onboardWikiWorkspace({
+        targetDir,
+        ...storageOptions,
+        force: flags.force,
+        bootstrap: !flags.noBootstrap,
+        prepSources: !flags.noPrep,
+        generateMap: !flags.noMap,
+        autoSync: !flags.noSync,
+      })
+      console.log('\n' + formatOnboardReport(result))
       break
     }
 
@@ -467,9 +463,9 @@ async function main() {
 版本: ${getLocalVersion()} (支持独立运行与 LLM Wiki 桌面联动双模 | 原位/集中外置双存储)
 
 安装与环境集成:
-  zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--all]  注入宿主 Agent 技能组与 MCP 配置
-  zhifangsi update [--git]                                           从 NPM / GitHub 自动升级并同步配置
-  zhifangsi uninstall                                                从宿主环境中卸载技能与 MCP 配置
+  zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--all]        注入宿主 Agent 技能组与 MCP 配置
+  zhifangsi update [target] [--check] [--git] [--force] [--proxy <url>]    自动识别 Git/NPM 升级、支持回滚并同步多宿主配置
+  zhifangsi uninstall                                                      从宿主环境中卸载技能与 MCP 配置
 
 存储配置与 L1 跨项目路由 (默认原位 <repo>/wiki，支持集中外置):
   zhifangsi config [show] [dir]                   查看全局存储配置与当前项目的知识库解析结果
@@ -481,7 +477,7 @@ async function main() {
   zhifangsi repos [query] [--register [dir]]      检索或登记 L1 跨项目路由注册表 (供 Super-agent Router 定位 Repo)
 
 核心测绘与巡检命令 (均支持 --wiki-dir / --vault-dir / --centralized / --local 覆盖):
-  zhifangsi init [dir] [--force]       初始化 Codebase Map 架构契约与 Wiki 目录
+  zhifangsi init [dir] [--force] [--minimal] 一键初始化架构契约、AST 模块建档、代码骨架源并联动 LLM Wiki
   zhifangsi bootstrap [dir] [--force]  基于 AST 目录拓扑自动聚类生成 wiki/modules/*.md 模块档案
   zhifangsi map [dir] [outfile]        测绘并输出代码库拓扑、PageRank 核心关隘与循环依赖预警
   zhifangsi skeleton [dir] [out]       提取高信息密度代码骨架 (支持 --target <file|module> 局部邻域骨架)

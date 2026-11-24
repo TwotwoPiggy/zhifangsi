@@ -2,6 +2,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { DependencyGraph } from '../ast/dependency-graph.js'
 import {
+  createModuleSkeleton,
+  buildSubsystemSourceDocument,
+  shouldIgnorePath,
+  type ModuleSkeleton,
+} from '../ast/skeletonizer.js'
+import {
   resolveStoragePaths,
   upsertRepoRegistry,
   type StorageResolveOptions,
@@ -570,5 +576,211 @@ export function bootstrapWikiModules(
     modulesSkipped,
     wikiDir: storage.wikiDir,
     storageMode: storage.mode,
+  }
+}
+
+export interface PrepareSourcesOptions extends StorageResolveOptions {
+  /** 自定义骨架输出目录，缺省为 <storageRoot>/raw/sources/codebase */
+  outputDir?: string
+  /** 是否覆盖已存在的骨架源文档与 CODEBASE_MAP 副本，默认为 false */
+  force?: boolean
+  /** 是否同时将 <repoRoot>/CODEBASE_MAP.md 抄送至 <storageRoot>/raw/sources/CODEBASE_MAP.md，默认为 true */
+  copyCodebaseMap?: boolean
+}
+
+export interface PrepareSourcesResult {
+  outputDir: string
+  manifestPath?: string
+  subsystemFiles: string[]
+  skippedFiles: string[]
+  copiedCodebaseMap: boolean
+  codebaseMapDest?: string
+  filesProcessed: number
+  totalOriginalLines: number
+  totalSkeletonLines: number
+  tokenSavingsPct: number
+}
+
+const PREP_EXT_LANG_MAP: Record<string, string> = {
+  '.ts': 'typescript',
+  '.tsx': 'typescript',
+  '.js': 'javascript',
+  '.jsx': 'javascript',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
+  '.py': 'python',
+  '.rs': 'rust',
+  '.go': 'go',
+  '.java': 'java',
+  '.c': 'c',
+  '.cpp': 'cpp',
+  '.h': 'c',
+  '.hpp': 'cpp',
+  '.cs': 'csharp',
+  '.php': 'php',
+  '.swift': 'swift',
+  '.kt': 'kotlin',
+}
+
+const PREP_EXTRA_IGNORES: RegExp[] = [
+  /^(raw|wiki|\.obsidian|\.zhifangsi|\.llm-wiki)($|[\\/])/i,
+]
+
+/**
+ * 为 LLM Wiki 预处理原始情报源 (raw/sources/)：
+ * 1. 若存在 <repoRoot>/CODEBASE_MAP.md，抄送一份到 <storageRoot>/raw/sources/CODEBASE_MAP.md
+ * 2. 按子系统目录提取高密度代码骨架到 <storageRoot>/raw/sources/codebase/subsystem-*.md 与 codebase-manifest.md
+ */
+export function prepareCodebaseSources(
+  targetDir: string,
+  options: PrepareSourcesOptions = {}
+): PrepareSourcesResult {
+  const storage = resolveStoragePaths(targetDir, options)
+  const repoRoot = storage.repoRoot
+  const storageRoot = storage.storageRoot
+  const rawSourcesDir = path.join(storageRoot, 'raw', 'sources')
+  const outDir = options.outputDir
+    ? path.resolve(options.outputDir)
+    : path.join(rawSourcesDir, 'codebase')
+
+  const subsystemFiles: string[] = []
+  const skippedFiles: string[] = []
+  let copiedCodebaseMap = false
+  let codebaseMapDest: string | undefined
+
+  // 1. 抄送已存在的 CODEBASE_MAP.md 到 raw/sources/
+  if (options.copyCodebaseMap !== false) {
+    const srcMapPath = path.join(repoRoot, 'CODEBASE_MAP.md')
+    const destMapPath = path.join(rawSourcesDir, 'CODEBASE_MAP.md')
+    if (fs.existsSync(srcMapPath) && path.resolve(srcMapPath) !== path.resolve(destMapPath)) {
+      fs.mkdirSync(rawSourcesDir, { recursive: true })
+      if (!fs.existsSync(destMapPath) || options.force) {
+        fs.copyFileSync(srcMapPath, destMapPath)
+        copiedCodebaseMap = true
+        codebaseMapDest = destMapPath
+      } else {
+        skippedFiles.push('raw/sources/CODEBASE_MAP.md')
+      }
+    }
+  }
+
+  // 2. 扫描代码文件并提取子系统骨架
+  const scannedFiles: Array<{ fullPath: string; relPath: string; lang: string }> = []
+  function scan(dir: string) {
+    if (!fs.existsSync(dir)) return
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      const relPath = path.relative(repoRoot, fullPath).replace(/\\/g, '/')
+      if (shouldIgnorePath(relPath, PREP_EXTRA_IGNORES)) continue
+
+      if (entry.isDirectory()) {
+        scan(fullPath)
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase()
+        const lang = PREP_EXT_LANG_MAP[ext]
+        if (lang) {
+          scannedFiles.push({ fullPath, relPath, lang })
+        }
+      }
+    }
+  }
+  scan(repoRoot)
+
+  if (scannedFiles.length === 0) {
+    return {
+      outputDir: outDir,
+      subsystemFiles,
+      skippedFiles,
+      copiedCodebaseMap,
+      codebaseMapDest,
+      filesProcessed: 0,
+      totalOriginalLines: 0,
+      totalSkeletonLines: 0,
+      tokenSavingsPct: 0,
+    }
+  }
+
+  const groups = new Map<string, ModuleSkeleton[]>()
+  let totalOriginalLines = 0
+  let totalSkeletonLines = 0
+
+  for (const f of scannedFiles) {
+    let content = ''
+    try {
+      content = fs.readFileSync(f.fullPath, 'utf-8')
+    } catch {
+      continue
+    }
+
+    const skel = createModuleSkeleton(f.relPath, content, f.lang)
+    totalOriginalLines += skel.originalLines
+    totalSkeletonLines += skel.skeletonLines
+
+    const parts = f.relPath.split('/')
+    const groupKey = parts.length > 2 ? `${parts[0]}-${parts[1]}` : parts[0] || 'root'
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, [])
+    }
+    groups.get(groupKey)!.push(skel)
+  }
+
+  fs.mkdirSync(outDir, { recursive: true })
+
+  const tokenSavingsPct =
+    totalOriginalLines > 0
+      ? Math.max(0, Math.round(((totalOriginalLines - totalSkeletonLines) / totalOriginalLines) * 100))
+      : 0
+
+  const manifestLines: string[] = [
+    '# Codebase Architecture Manifest',
+    '',
+    `Generated by Zhifangsi Code Skeletonizer on ${new Date().toISOString().split('T')[0]}.`,
+    `Total Files: ${scannedFiles.length} | Raw Lines: ${totalOriginalLines} | Skeleton Lines: ${totalSkeletonLines} (${tokenSavingsPct}% token reduction).`,
+    '',
+    '## Subsystems',
+    '',
+  ]
+
+  for (const [groupKey, groupSkeletons] of groups.entries()) {
+    const slug = groupKey.toLowerCase().replace(/[^a-z0-9_-]+/g, '-')
+    const fileName = `subsystem-${slug}.md`
+    const filePath = path.join(outDir, fileName)
+    const relDisplay = `raw/sources/codebase/${fileName}`
+
+    manifestLines.push(`- **[[subsystem-${slug}]]** — ${groupSkeletons.length} files in \`${groupKey}\``)
+
+    if (fs.existsSync(filePath) && !options.force) {
+      skippedFiles.push(relDisplay)
+      continue
+    }
+
+    const doc = buildSubsystemSourceDocument(
+      groupKey,
+      groupSkeletons,
+      `Contains ${groupSkeletons.length} modules from directory \`${groupKey}\`.`
+    )
+    fs.writeFileSync(filePath, doc, 'utf-8')
+    subsystemFiles.push(relDisplay)
+  }
+
+  const manifestPath = path.join(outDir, 'codebase-manifest.md')
+  if (!fs.existsSync(manifestPath) || options.force) {
+    fs.writeFileSync(manifestPath, manifestLines.join('\n') + '\n', 'utf-8')
+  } else {
+    skippedFiles.push('raw/sources/codebase/codebase-manifest.md')
+  }
+
+  return {
+    outputDir: outDir,
+    manifestPath,
+    subsystemFiles,
+    skippedFiles,
+    copiedCodebaseMap,
+    codebaseMapDest,
+    filesProcessed: scannedFiles.length,
+    totalOriginalLines,
+    totalSkeletonLines,
+    tokenSavingsPct,
   }
 }

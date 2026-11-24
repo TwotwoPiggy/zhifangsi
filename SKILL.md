@@ -35,10 +35,10 @@ description: 兵部职方司：代码库战略舆图与架构自愈引擎（拓�
 ## 二、 命令行指令 (CLI Reference)
 
 ```bash
-# 0. 安装/升级/卸载与宿主 IDE 集成 (支持 NPM 全局或 npx)
+# 0. 安装/升级/卸载与宿主 IDE 集成 (支持 NPM 全局、npx 与 Git 源码模式)
 npm install -g zhifangsi
 zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--all]
-zhifangsi update [--git]
+zhifangsi update [version|tag|branch] [--check] [--git] [--force] [--proxy <url>]
 zhifangsi uninstall
 
 # 0.5 存储模式配置与 L1 跨项目路由 (默认原位 <repo>/wiki，支持集中外置 Vault)
@@ -50,8 +50,8 @@ zhifangsi config unset-repo [repoDir]
 zhifangsi config reset
 zhifangsi repos [query] [--register [目标路径]]
 
-# 1. 初始化代码库 Codebase Map 架构契约与 Wiki 目录 (支持 --wiki-dir / --vault-dir / --centralized / --local)
-zhifangsi init [目标路径] [--force]
+# 1. 一键初始化代码库架构契约、AST 模块建档、代码骨架源并联动 LLM Wiki (支持 --minimal / --wiki-dir / --vault-dir / --centralized / --local)
+zhifangsi init [目标路径] [--force] [--minimal]
 
 # 2. 存量代码库冷启动自动建档 (基于 AST 目录拓扑逆向聚类生成 wiki/modules/*.md)
 zhifangsi bootstrap [目标路径] [--force]
@@ -89,6 +89,7 @@ zhifangsi mcp
 - **`zhifangsi_module_info`**：查询特定模块（支持模块名或目录路径）的职责、导出 API 签名契约与深度依赖影响范围（支持可选 `wiki_dir`）。
 - **`zhifangsi_skeleton`**：基于局部性原理（Inline & Spill）提取目标文件/模块的骨架与 1 跳邻居导出契约（或全库骨架，支持可选 `wiki_dir`）。
 - **`zhifangsi_impact`**：评估拟修改文件的变更爆炸半径、波及模块、建议回归验证的业务流（Workflows）及高危关隘防撞车预警（支持可选 `wiki_dir`）。
+- **`zhifangsi_init`**：一键初始化项目架构知识库并接入 LLM Wiki（自动完成 `schema.md`/`wiki/` 骨架、AST 模块聚类、舆图与高密度代码骨架预处理、桌面端桥接探测与自动向量同步）。
 - **`zhifangsi_bootstrap`**：存量代码库基于 AST 目录拓扑一键逆向聚类生成 `wiki/modules/*.md` 档案（支持可选 `wiki_dir`）。
 - **`zhifangsi_workflow_trace`**：追踪特定业务流的端到端调用时序与阶段步骤（支持可选 `wiki_dir`）。
 - **`zhifangsi_search`**：混合语义检索（桌面端在线走 LanceDB，离线自动走本地 Wiki + AST 导出符号混合检索，支持可选 `wiki_dir`）。

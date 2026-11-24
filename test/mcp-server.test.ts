@@ -13,7 +13,7 @@ import { checkInvariants } from '../src/invariants/checker'
 import type { InvariantDefinition } from '../src/invariants/types'
 
 describe('Zhifangsi MCP Server & Tools', () => {
-  it('creates server with all 9 registered tools', async () => {
+  it('creates server with all 11 registered tools', async () => {
     const server = createZhifangsiMcpServer()
     expect(server).toBeDefined()
 
@@ -23,6 +23,7 @@ describe('Zhifangsi MCP Server & Tools', () => {
 
     expect(toolNames).toEqual(
       expect.arrayContaining([
+        'zhifangsi_init',
         'zhifangsi_map',
         'zhifangsi_module_info',
         'zhifangsi_workflow_trace',

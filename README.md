@@ -49,9 +49,9 @@
 - 智能剥离函数实现细节，完整保留接口、类型、类、函数签名契约与导出声明，达到 **85%+ Token 降噪压缩率**；
 - 支持全库骨架提取及 **`--target <file|module>` 局部邻域骨架**，基于局部性原理仅内联目标模块与 1 跳邻居契约，大幅降低 LLM 上下文消耗。
 
-### 4. 存量工程冷启动建档（Init & Bootstrap）
-- **`zhifangsi init`**：原位初始化 `schema.md` 架构契约与 `wiki/` 知识库目录结构，可直接被 LLM Wiki 桌面端挂载；
-- **`zhifangsi bootstrap`**：基于 AST 目录拓扑自动聚类生成 `wiki/modules/*.md` 模块档案（含核心入口、导出 API 签名契约与跨模块双链依赖）。
+### 4. 一键冷启动建档与 LLM Wiki 接入（Init & Bootstrap）
+- **`zhifangsi init` / `/zhifangsi-init`**：一键完成 `schema.md` 与 `wiki/` 目录初始化、AST 模块聚类建档、`CODEBASE_MAP.md` 测绘/抄送、高密度代码骨架提取（`raw/sources/codebase/`），并自动探测 LLM Wiki 桌面端状态（已挂载自动同步向量库，未挂载给出精准挂载目录；加 `--minimal` 可仅建空目录骨架）；
+- **`zhifangsi bootstrap`**：单独基于 AST 目录拓扑自动聚类生成或刷新 `wiki/modules/*.md` 模块档案（含核心入口、导出 API 签名契约与跨模块双链依赖）。
 
 ### 5. 关防守则、循环依赖与舆图失真巡检（Invariants & Drift Check）🎯
 - **静态合规硬阻断**：将架构分层与边界规则具象化为可验证的静态约束，精准报告违规文件路径与行号；
@@ -79,7 +79,7 @@
 # 1. 全局安装 zhifangsi CLI 与独立 MCP 命令 (zhifangsi-mcp)
 npm install -g zhifangsi
 
-# 2. 一键将 6 项 Skills 与 9 大 MCP 军机工具注入 Antigravity
+# 2. 一键将 8 项 Skills 与 11 大 MCP 军机工具注入 Antigravity
 zhifangsi install --antigravity
 
 # 或免全局安装，直接通过 npx 一键注入：
@@ -112,12 +112,22 @@ zhifangsi install --antigravity
 
 ### 🔄 升级与卸载
 
+对齐 `yongle-dadian` 更新机制，自动识别 **Git 源码模式** 与 **NPM 全局包模式**，支持脏工作区保护、稳定版 Tag / 指定版本切换、依赖变化检测与 TypeScript 自动编译、失败自动回滚，并通过新子进程重新同步所有已登记宿主（Antigravity / VS Code / Qoder / Cursor / Claude）：
+
 ```bash
-# 自动检测 NPM / GitHub 最新版本并原地升级 + 同步刷新宿主环境配置
+# 自动检测最新稳定版并升级 + 多宿主同步配置
 zhifangsi update
 
-# 强制从 GitHub 主干更新
+# 仅检查可用更新（不修改代码与配置）
+zhifangsi update --check
+
+# 切换到指定版本 / Git Tag / 分支
+zhifangsi update v1.1.1
+zhifangsi update main
+
+# NPM 模式下强制从 GitHub 远端源拉取更新，或指定代理
 zhifangsi update --git
+zhifangsi update --proxy http://127.0.0.1:10808
 
 # 从宿主环境中清理已注入的 Skills 与 MCP 配置
 zhifangsi uninstall
@@ -140,7 +150,7 @@ npm run release:dry-run
 ```bash
 # 0. 安装 / 升级 / 卸载宿主环境集成
 zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--claude|--all]
-zhifangsi update [--git]
+zhifangsi update [version|tag|branch] [--check] [--git] [--force] [--proxy <url>]
 zhifangsi uninstall
 
 # 0.5 知识库存储配置与 L1 跨项目路由 (默认原位，支持集中外置)
@@ -152,8 +162,8 @@ zhifangsi config unset-repo [代码库路径]          # 移除单项目覆盖
 zhifangsi config reset                            # 恢复默认配置 (local + ~/.zhifangsi/vault)
 zhifangsi repos [关键词] [--register [代码库路径]] # 检索或登记 L1 跨项目路由注册表
 
-# 1. 初始化代码库 Codebase Map 架构契约 (支持 --wiki-dir / --vault-dir / --centralized / --local)
-zhifangsi init [代码库路径] [--force]
+# 1. 一键初始化架构契约、AST 模块建档、代码骨架源并联动 LLM Wiki (支持 --minimal / --wiki-dir / --vault-dir / --centralized / --local)
+zhifangsi init [代码库路径] [--force] [--minimal]
 
 # 2. 存量代码库冷启动自动建档 (基于 AST 目录拓扑逆向聚类生成 wiki/modules/*.md)
 zhifangsi bootstrap [代码库路径] [--force]
@@ -260,13 +270,14 @@ zhifangsi check . --wiki-dir D:/custom/my-app/wiki
 
 ---
 
-## 🤖 MCP 2.0 军机工具集（10 大工具）
+## 🤖 MCP 2.0 军机工具集（11 大工具）
 
-职方司基于标准 `@modelcontextprotocol/sdk` 实现，向 Antigravity、Qoder、VS Code Copilot、Cursor、Claude Code 等 Agent 暴露以下 10 大军机工具（涉及 Wiki 读写的工具均支持可选 `wiki_dir` 参数）：
+职方司基于标准 `@modelcontextprotocol/sdk` 实现，向 Antigravity、Qoder、VS Code Copilot、Cursor、Claude Code 等 Agent 暴露以下 11 大军机工具（涉及 Wiki 读写的工具均支持可选 `wiki_dir` 参数）：
 
 | 工具名称 | 作用说明 | 参数 |
 | :--- | :--- | :--- |
 | `zhifangsi_repos` | 查询 L1 跨项目路由注册表（仅返回轻量名片，供 Super-agent Router 先定位目标 Repo） | `query`, `vault_dir` (均可选) |
+| `zhifangsi_init` | 一键初始化架构知识库并接入 LLM Wiki（骨架初始化 + AST 建档 + 舆图/代码骨架源准备 + 桌面端同步） | `target_dir`, `wiki_dir`, `storage_mode`, `vault_dir`, `force`, `bootstrap`, `prep_sources`, `generate_map`, `auto_sync` (均可选) |
 | `zhifangsi_map` | 获取并持久化代码库全景战略舆图、PageRank 核心关隘、循环依赖预警与守则状态 | `target_dir`, `wiki_dir`, `output_file` (可选) |
 | `zhifangsi_check_invariants` | 运行关防守则静态合规巡检，检测越权依赖、循环依赖与 Wiki 舆图失真（Drift） | `target_dir`, `wiki_dir` (可选) |
 | `zhifangsi_skeleton` | 基于局部性原理（Inline & Spill）提取目标文件/模块 1 跳邻域骨架或全库骨架 | `target`, `hops`, `target_dir`, `wiki_dir` (均可选) |
@@ -277,15 +288,17 @@ zhifangsi check . --wiki-dir D:/custom/my-app/wiki
 | `zhifangsi_search` | 混合语义检索（桌面端在线走 LanceDB 向量检索，离线自动回退本地 Wiki + AST 符号） | `query` (必填), `target_dir`, `wiki_dir` (可选) |
 | `zhifangsi_bridge_status` | 检查与 LLM Wiki 桌面端（`127.0.0.1:19828`）的桥接协同状态 | 无 |
 
-### Antigravity 斜杠技能组（6 项 Skills）
+### Antigravity 斜杠技能组（8 项 Skills）
 
 通过 `zhifangsi install --antigravity` 自动注册以下技能：
 - `/zhifangsi`：主战略舆图与架构自愈中枢技能
+- `/zhifangsi-init`：一键初始化架构知识库、AST 建档、代码骨架源并接入 LLM Wiki
 - `/zhifangsi-map`：测绘并持久化生成 `CODEBASE_MAP.md`
 - `/zhifangsi-check`：执行关防守则与架构不变量静态巡检
 - `/zhifangsi-skeleton`：提取 85%+ 压缩率代码骨架
 - `/zhifangsi-trace`：追踪核心业务流调用时序
 - `/zhifangsi-sync`：增量同步本地架构 Wiki 至 LLM Wiki 桌面端
+- `/zhifangsi-update`：检查并自动升级职方司（Git/NPM 双模 + 自动回滚 + 多宿主重注入）
 
 ### IDE MCP 配置示例
 
@@ -347,10 +360,11 @@ zhifangsi/
 │   │   └── server.ts           # Stdio MCP Server 实现
 │   └── index.ts                # 统一 API 导出
 ├── scripts/
-│   ├── install-antigravity.mjs # 跨环境 Skills & MCP 一键安装/卸载脚本
+│   ├── install-antigravity.mjs # 跨环境 Skills & MCP 一键安装/卸载脚本（含多宿主清单）
+│   ├── zhifangsi-update.mjs    # 自动更新引擎（Git/NPM 双模、回滚、构建与多宿主重注入）
 │   ├── release.mjs             # 版本升级、测试自检、打 Tag 与 NPM 发布脚本
 │   └── codebase-prep.mjs       # LLM Wiki 源码骨架预处理脚本
-├── skills/                     # Antigravity 专项指令子技能 (5 项)
+├── skills/                     # Antigravity 专项指令子技能 (7 项)
 ├── wiki/
 │   └── invariants/             # 代码库自身架构关防守则规范文档
 ├── test/                       # 自动化测试套件 (Vitest, 28 tests)

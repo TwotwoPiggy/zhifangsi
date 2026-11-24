@@ -20,6 +20,7 @@ import {
 import { extractFrontmatter } from '../invariants/parser.js'
 import { generateCodebaseSkeleton } from '../ast/skeletonizer.js'
 import { bootstrapWikiModules } from '../init/scaffold.js'
+import { onboardWikiWorkspace, formatOnboardReport } from './onboard.js'
 import {
   resolveStoragePaths,
   loadGlobalConfig,
@@ -213,6 +214,53 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
               },
             },
             required: ['files'],
+          },
+        },
+        {
+          name: 'zhifangsi_init',
+          description:
+            '一键初始化项目架构知识库并接入 LLM Wiki：自动完成目录骨架初始化 (schema.md / wiki/)、AST 模块聚类建档 (wiki/modules/*.md)、CODEBASE_MAP.md 测绘/抄送、高密度子系统代码骨架提取 (raw/sources/codebase/)，并自动探测 LLM Wiki 桌面端状态（已挂载则自动同步向量库，未挂载则给出精准挂载目录）。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              target_dir: {
+                type: 'string',
+                description: '代码库根路径，缺省为当前工作目录',
+              },
+              wiki_dir: {
+                type: 'string',
+                description: '可选，自定义知识库 wiki 目录路径；缺省时按全局/项目配置自动解析',
+              },
+              storage_mode: {
+                type: 'string',
+                enum: ['local', 'centralized'],
+                description: '可选，指定存储模式：local（原位 <repo>/wiki）或 centralized（集中外置不污染业务仓）',
+              },
+              vault_dir: {
+                type: 'string',
+                description: '可选，集中外置模式的 Vault 根目录',
+              },
+              force: {
+                type: 'boolean',
+                description: '是否覆盖已存在的架构文件与骨架，默认为 false',
+              },
+              bootstrap: {
+                type: 'boolean',
+                description: '是否同时执行 AST 聚类生成 wiki/modules/*.md，默认为 true',
+              },
+              prep_sources: {
+                type: 'boolean',
+                description: '是否提取子系统代码骨架并抄送 CODEBASE_MAP.md 到 raw/sources/，默认为 true',
+              },
+              generate_map: {
+                type: 'boolean',
+                description: '若尚无 CODEBASE_MAP.md（或 force=true），是否顺带测绘生成，默认为 true',
+              },
+              auto_sync: {
+                type: 'boolean',
+                description: '若 LLM Wiki 桌面端在线且项目已挂载，是否自动推送向量索引，默认为 true',
+              },
+            },
           },
         },
         {
@@ -473,6 +521,65 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
           content: [
             { type: 'text', text: result.markdown },
             { type: 'text', text: JSON.stringify(result, null, 2) },
+          ],
+        }
+      }
+
+      case 'zhifangsi_init': {
+        const storageModeArg =
+          args.storage_mode === 'local' || args.storage_mode === 'centralized'
+            ? args.storage_mode
+            : undefined
+        const vaultDirArg = args.vault_dir ? String(args.vault_dir) : undefined
+        const result = await onboardWikiWorkspace(
+          {
+            targetDir,
+            wikiDir: wikiDirArg,
+            storageMode: storageModeArg,
+            vaultDir: vaultDirArg,
+            force: Boolean(args.force),
+            bootstrap: args.bootstrap !== false,
+            prepSources: args.prep_sources !== false,
+            generateMap: args.generate_map !== false,
+            autoSync: args.auto_sync !== false,
+          },
+          bridge
+        )
+        const text = formatOnboardReport(result)
+        return {
+          content: [
+            { type: 'text', text },
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  projectName: result.projectName,
+                  repoRoot: result.repoRoot,
+                  storageRoot: result.storageRoot,
+                  wikiDir: result.wikiDir,
+                  storageMode: result.storageMode,
+                  createdFiles: result.init.createdFiles,
+                  skippedFiles: result.init.skippedFiles,
+                  modulesCreated: result.bootstrap?.modulesCreated || [],
+                  codebaseMapPath: result.codebaseMapPath,
+                  codebaseMapGenerated: result.codebaseMapGenerated,
+                  prepSources: result.prepSources
+                    ? {
+                        outputDir: result.prepSources.outputDir,
+                        filesProcessed: result.prepSources.filesProcessed,
+                        subsystemCount: result.prepSources.subsystemFiles.length,
+                        tokenSavingsPct: result.prepSources.tokenSavingsPct,
+                        copiedCodebaseMap: result.prepSources.copiedCodebaseMap,
+                      }
+                    : undefined,
+                  bridgeState: result.bridgeState,
+                  pagesSynced: result.sync?.pagesSynced || [],
+                  sourcesRescanned: result.sourcesRescanned,
+                },
+                null,
+                2
+              ),
+            },
           ],
         }
       }
