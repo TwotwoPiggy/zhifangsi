@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url'
 import { execFileSync, execSync } from 'child_process'
 import {
   resolveHomeDir,
+  resolveCopilotHome,
   loadInstallManifest,
   getAntigravityManifestPath,
 } from './install-antigravity.mjs'
@@ -339,10 +340,12 @@ function rollbackGit(originalCommit, originalBranch, runGit, gitOpts, log, error
   }
 }
 
-function discoverReinstallTargets(homeDir, freshPkgRoot, log) {
+function discoverReinstallTargets(homeDir, freshPkgRoot, log, customHomeDir) {
   const manifest = loadInstallManifest(homeDir)
   const agyManifestPath = getAntigravityManifestPath(homeDir)
   const legacySkillDir = path.join(homeDir, '.gemini', 'antigravity', 'skills', 'zhifangsi')
+  const copilotHome = manifest.runtimes?.copilot?.copilotHome || resolveCopilotHome(customHomeDir)
+  const copilotSkillDir = path.join(copilotHome, 'skills', 'zhifangsi')
 
   const targets = []
   const hasAntigravity =
@@ -355,6 +358,22 @@ function discoverReinstallTargets(homeDir, freshPkgRoot, log) {
       runtime: 'antigravity',
       scope: manifest.runtimes?.antigravity?.scope || 'global',
       args: ['--antigravity'],
+      cwd: freshPkgRoot,
+    })
+  }
+
+  const hasCopilotGlobal =
+    Boolean(manifest.runtimes?.copilot) || fs.existsSync(copilotSkillDir)
+
+  if (hasCopilotGlobal) {
+    const copilotArgs = ['--copilot']
+    if (manifest.runtimes?.copilot?.legacyProfileEnabled) {
+      copilotArgs.push('--vscode-profile')
+    }
+    targets.push({
+      runtime: 'copilot',
+      scope: manifest.runtimes?.copilot?.scope || 'global',
+      args: copilotArgs,
       cwd: freshPkgRoot,
     })
   }
@@ -819,7 +838,7 @@ export async function runUpdater(rawArgs = [], options = {}) {
   } else if (!fs.existsSync(freshInstallerScript)) {
     warnLog(`    ${yellow}⚠${reset} 未找到安装脚本 (${freshInstallerScript})，跳过自动重注入。\n`)
   } else {
-    const targets = discoverReinstallTargets(homeDir, freshPkgRoot, log)
+    const targets = discoverReinstallTargets(homeDir, freshPkgRoot, log, options.homeDir)
     for (const target of targets) {
       log(
         `      ${cyan}▸${reset} 同步宿主: ${bold}${target.runtime}${reset} (${
@@ -862,7 +881,7 @@ export async function runUpdater(rawArgs = [], options = {}) {
     }`
   )
   log(
-    `  ${yellow}▸ 提示: 请重启您的 AI Agent（如 Antigravity / Cursor / Claude / VS Code）以加载最新 MCP 工具与 Skills。${reset}\n`
+    `  ${yellow}▸ 提示: 请重启或重载您的 AI Agent（如 Antigravity / VS Code Copilot / Cursor / Claude）以加载最新 MCP 工具与 Skills。${reset}\n`
   )
 
   return {

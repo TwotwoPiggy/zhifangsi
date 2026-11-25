@@ -118,11 +118,15 @@ function parseCommandArgs(rawArgs) {
   return { positional, flags, storageOptions }
 }
 
-// 支持类似 `npx zhifangsi --antigravity` 或 `npx zhifangsi --global --antigravity` 的直接标志调用
+// 支持类似 `npx zhifangsi --antigravity`、`npx zhifangsi --copilot` 或 `npx zhifangsi --vscode --global` 的直接标志调用
 if (
   command.startsWith('-') &&
   (args.includes('--antigravity') ||
+    args.includes('--copilot') ||
+    args.includes('--vscode-copilot') ||
     args.includes('--vscode') ||
+    args.includes('--vscode-profile') ||
+    args.includes('--legacy-mcp') ||
     args.includes('--qoder') ||
     args.includes('--cursor') ||
     args.includes('--claude') ||
@@ -463,9 +467,11 @@ async function main() {
 版本: ${getLocalVersion()} (支持独立运行与 LLM Wiki 桌面联动双模 | 原位/集中外置双存储)
 
 安装与环境集成:
-  zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--all]        注入宿主 Agent 技能组与 MCP 配置
+  zhifangsi install --copilot [--vscode-profile]                           全局注入 VS Code Copilot 8 项 Agent Skills、Instructions 与 MCP
+  zhifangsi install --vscode [--global|--local]                            注入 VS Code 工作区套件 (.vscode/mcp.json + .github/skills + instructions)
+  zhifangsi install [--antigravity|--copilot|--vscode|--qoder|--cursor|--claude|--all]
   zhifangsi update [target] [--check] [--git] [--force] [--proxy <url>]    自动识别 Git/NPM 升级、支持回滚并同步多宿主配置
-  zhifangsi uninstall                                                      从宿主环境中卸载技能与 MCP 配置
+  zhifangsi uninstall [--antigravity|--copilot|--vscode|--qoder|--cursor|--all]  从宿主环境中卸载技能、指令与 MCP 配置
 
 存储配置与 L1 跨项目路由 (默认原位 <repo>/wiki，支持集中外置):
   zhifangsi config [show] [dir]                   查看全局存储配置与当前项目的知识库解析结果

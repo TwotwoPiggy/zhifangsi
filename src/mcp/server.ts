@@ -32,11 +32,76 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
 
+const __serverFilename = fileURLToPath(import.meta.url)
+const __serverDirname = path.dirname(__serverFilename)
+
+function readServerPackageVersion(): string {
+  try {
+    const pkgPath = path.resolve(__serverDirname, '..', '..', 'package.json')
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : '1.1.2'
+  } catch {
+    return '1.1.2'
+  }
+}
+
+export function fileUriToLocalPath(uri: string): string | null {
+  if (!uri || typeof uri !== 'string') return null
+  const trimmed = uri.trim()
+  if (!trimmed.toLowerCase().startsWith('file://')) return null
+  try {
+    return path.resolve(fileURLToPath(trimmed))
+  } catch {
+    return null
+  }
+}
+
+export async function resolveDefaultTargetDir(
+  server: Pick<Server, 'getClientCapabilities' | 'listRoots'>,
+  explicitTargetDir?: unknown
+): Promise<string> {
+  if (typeof explicitTargetDir === 'string' && explicitTargetDir.trim()) {
+    return path.resolve(explicitTargetDir.trim())
+  }
+
+  try {
+    const caps = server.getClientCapabilities?.()
+    if (caps?.roots && typeof server.listRoots === 'function') {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const result = await Promise.race([
+        server.listRoots().catch(() => null),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 1500)
+        }),
+      ]).finally(() => {
+        if (timer) clearTimeout(timer)
+      })
+
+      if (result && Array.isArray(result.roots)) {
+        for (const root of result.roots) {
+          const localPath = fileUriToLocalPath(root?.uri)
+          if (localPath && fs.existsSync(localPath)) {
+            return localPath
+          }
+        }
+      }
+    }
+  } catch {
+    // 静默降级至环境变量或当前工作目录
+  }
+
+  if (process.env.ZHIFANGSI_WORKSPACE_DIR && process.env.ZHIFANGSI_WORKSPACE_DIR.trim()) {
+    return path.resolve(process.env.ZHIFANGSI_WORKSPACE_DIR.trim())
+  }
+
+  return process.cwd()
+}
+
 export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
   const server = new Server(
     {
       name: 'zhifangsi',
-      version: '1.1.0',
+      version: readServerPackageVersion(),
     },
     {
       capabilities: {
@@ -309,7 +374,10 @@ export function createZhifangsiMcpServer(bridge = new LLMWikiBridge()) {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params
-    const targetDir = (args.target_dir as string) || process.cwd()
+    const skipWorkspaceResolve = name === 'zhifangsi_bridge_status' || name === 'zhifangsi_repos'
+    const targetDir = skipWorkspaceResolve
+      ? process.cwd()
+      : await resolveDefaultTargetDir(server, args.target_dir)
     const wikiDirArg = args.wiki_dir ? String(args.wiki_dir) : undefined
     const storage = resolveStoragePaths(targetDir, { wikiDir: wikiDirArg })
 

@@ -37,9 +37,11 @@ description: 兵部职方司：代码库战略舆图与架构自愈引擎（拓�
 ```bash
 # 0. 安装/升级/卸载与宿主 IDE 集成 (支持 NPM 全局、npx 与 Git 源码模式)
 npm install -g zhifangsi
-zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--all]
+zhifangsi install --copilot                              # VS Code Copilot 全局 (Agent Skills + Instructions + MCP)
+zhifangsi install --vscode                               # VS Code 工作区套件 (.vscode/mcp.json + .github/skills + instructions)
+zhifangsi install [--antigravity|--copilot|--vscode|--qoder|--cursor|--claude|--all]
 zhifangsi update [version|tag|branch] [--check] [--git] [--force] [--proxy <url>]
-zhifangsi uninstall
+zhifangsi uninstall [--antigravity|--copilot|--vscode|--all]
 
 # 0.5 存储模式配置与 L1 跨项目路由 (默认原位 <repo>/wiki，支持集中外置 Vault)
 zhifangsi config [show] [目标路径]
@@ -100,40 +102,73 @@ zhifangsi mcp
 ## 四、 客户端接入指引
 
 ### 1. VS Code (GitHub Copilot)
-在项目根目录 `.vscode/mcp.json` 中配置：
+
+#### 方式 A：全局一键集成（推荐，全项目通用）
+```bash
+zhifangsi install --copilot
+# 或免全局安装：npx zhifangsi --copilot
+# 若使用旧版 VS Code Local harness，可附加 --vscode-profile 同步至 Code/User/mcp.json
+```
+自动部署：
+- **Agent Skills**：`~/.copilot/skills/zhifangsi*/SKILL.md`（8 项 `/zhifangsi*` 斜杠技能）
+- **Custom Instructions**：`~/.copilot/instructions/zhifangsi.instructions.md`
+- **Copilot 全局 MCP**：`~/.copilot/mcp-config.json`（`mcpServers.zhifangsi`）
+
+#### 方式 B：项目工作区级集成（团队共享）
+```bash
+zhifangsi install --vscode
+# 等价于：zhifangsi install --copilot --local
+```
+自动部署 `.vscode/mcp.json`、`.github/skills/zhifangsi*/SKILL.md` 与 `.github/instructions/zhifangsi.instructions.md`。
+
+#### 手动配置示例
+- Copilot Harness 全局（`~/.copilot/mcp-config.json`）：
+```json
+{
+  "mcpServers": {
+    "zhifangsi": {
+      "type": "local",
+      "command": "npx",
+      "args": ["-y", "zhifangsi", "mcp"],
+      "tools": ["*"]
+    }
+  }
+}
+```
+- VS Code 工作区（`.vscode/mcp.json`）：
 ```json
 {
   "servers": {
     "zhifangsi": {
       "type": "stdio",
-      "command": "node",
-      "args": ["D:/Computers/AIDevelop/Tools/Skills/zhifangsi/dist/mcp/server.js"]
+      "command": "npx",
+      "args": ["-y", "zhifangsi", "mcp"]
     }
   }
 }
 ```
 
-### 2. Qoder
+### 2. Qoder / Claude Code
 在项目根目录 `.mcp.json` 中配置：
 ```json
 {
   "mcpServers": {
     "zhifangsi": {
-      "command": "node",
-      "args": ["D:/Computers/AIDevelop/Tools/Skills/zhifangsi/dist/mcp/server.js"]
+      "command": "npx",
+      "args": ["-y", "zhifangsi", "mcp"]
     }
   }
 }
 ```
 
 ### 3. Antigravity
-在 `~/.gemini/config/mcp_config.json` 或项目 `.agents/mcp_config.json` 中配置：
+执行 `zhifangsi install --antigravity`，或在 `~/.gemini/config/mcp_config.json` 中配置：
 ```json
 {
   "mcpServers": {
     "zhifangsi": {
-      "command": "node",
-      "args": ["D:/Computers/AIDevelop/Tools/Skills/zhifangsi/dist/mcp/server.js"]
+      "command": "npx",
+      "args": ["-y", "zhifangsi", "mcp"]
     }
   }
 }

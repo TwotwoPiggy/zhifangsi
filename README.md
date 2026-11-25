@@ -79,14 +79,17 @@
 # 1. 全局安装 zhifangsi CLI 与独立 MCP 命令 (zhifangsi-mcp)
 npm install -g zhifangsi
 
-# 2. 一键将 8 项 Skills 与 11 大 MCP 军机工具注入 Antigravity
-zhifangsi install --antigravity
+# 2. 一键将 8 项 Skills 与 11 大 MCP 军机工具注入目标 AI 宿主：
+zhifangsi install --antigravity              # Antigravity 全局
+zhifangsi install --copilot                  # VS Code Copilot 全局 (Agent Skills + Instructions + MCP)
+zhifangsi install --copilot --vscode-profile # 同时兼容旧版 VS Code Local harness (Code/User/mcp.json)
 
 # 或免全局安装，直接通过 npx 一键注入：
 npx zhifangsi --antigravity
+npx zhifangsi --copilot
 
-# 可选：为当前工程自动写入 VS Code / Qoder / Cursor / Claude Code 的 MCP 配置
-zhifangsi install --vscode
+# 可选：为当前工程注入项目级配置（团队共享）
+zhifangsi install --vscode                   # VS Code 工作区 (.vscode/mcp.json + .github/skills + .github/instructions)
 zhifangsi install --qoder
 zhifangsi install --cursor
 zhifangsi install --all
@@ -108,11 +111,13 @@ npm install
 npm run build
 npm link
 zhifangsi install --antigravity
+# 或注入 VS Code Copilot 全局集成：
+zhifangsi install --copilot
 ```
 
 ### 🔄 升级与卸载
 
-对齐 `yongle-dadian` 更新机制，自动识别 **Git 源码模式** 与 **NPM 全局包模式**，支持脏工作区保护、稳定版 Tag / 指定版本切换、依赖变化检测与 TypeScript 自动编译、失败自动回滚，并通过新子进程重新同步所有已登记宿主（Antigravity / VS Code / Qoder / Cursor / Claude）：
+对齐 `yongle-dadian` 更新机制，自动识别 **Git 源码模式** 与 **NPM 全局包模式**，支持脏工作区保护、稳定版 Tag / 指定版本切换、依赖变化检测与 TypeScript 自动编译、失败自动回滚，并通过新子进程重新同步所有已登记宿主（Antigravity / VS Code Copilot / Qoder / Cursor / Claude）：
 
 ```bash
 # 自动检测最新稳定版并升级 + 多宿主同步配置
@@ -149,9 +154,9 @@ npm run release:dry-run
 
 ```bash
 # 0. 安装 / 升级 / 卸载宿主环境集成
-zhifangsi install [--antigravity|--vscode|--qoder|--cursor|--claude|--all]
+zhifangsi install [--antigravity|--copilot|--vscode|--qoder|--cursor|--claude|--all] [--global|--local] [--vscode-profile]
 zhifangsi update [version|tag|branch] [--check] [--git] [--force] [--proxy <url>]
-zhifangsi uninstall
+zhifangsi uninstall [--antigravity|--copilot|--vscode|--qoder|--cursor|--all]
 
 # 0.5 知识库存储配置与 L1 跨项目路由 (默认原位，支持集中外置)
 zhifangsi config [show] [代码库路径]              # 查看全局配置与当前项目的知识库解析路径
@@ -288,9 +293,9 @@ zhifangsi check . --wiki-dir D:/custom/my-app/wiki
 | `zhifangsi_search` | 混合语义检索（桌面端在线走 LanceDB 向量检索，离线自动回退本地 Wiki + AST 符号） | `query` (必填), `target_dir`, `wiki_dir` (可选) |
 | `zhifangsi_bridge_status` | 检查与 LLM Wiki 桌面端（`127.0.0.1:19828`）的桥接协同状态 | 无 |
 
-### Antigravity 斜杠技能组（8 项 Skills）
+### Antigravity / VS Code Copilot 斜杠技能组（8 项 Agent Skills）
 
-通过 `zhifangsi install --antigravity` 自动注册以下技能：
+通过 `zhifangsi install --antigravity`（Antigravity 全局）、`zhifangsi install --copilot`（VS Code Copilot 全局 `~/.copilot/skills/`）或 `zhifangsi install --vscode`（当前项目 `.github/skills/`）自动注册以下全部 8 项技能：
 - `/zhifangsi`：主战略舆图与架构自愈中枢技能
 - `/zhifangsi-init`：一键初始化架构知识库、AST 建档、代码骨架源并接入 LLM Wiki
 - `/zhifangsi-map`：测绘并持久化生成 `CODEBASE_MAP.md`
@@ -300,11 +305,26 @@ zhifangsi check . --wiki-dir D:/custom/my-app/wiki
 - `/zhifangsi-sync`：增量同步本地架构 Wiki 至 LLM Wiki 桌面端
 - `/zhifangsi-update`：检查并自动升级职方司（Git/NPM 双模 + 自动回滚 + 多宿主重注入）
 
-### IDE MCP 配置示例
+### IDE MCP 与 VS Code Copilot 配置示例
 
-推荐直接运行 `zhifangsi install --vscode` / `--qoder` / `--cursor` 一键生成，也可手动配置：
+推荐直接运行 `zhifangsi install --copilot`（VS Code Copilot 全局）、`zhifangsi install --vscode`（VS Code 工作区套件）或 `--qoder` / `--cursor` 一键生成，也可手动配置：
 
-#### VS Code (`.vscode/mcp.json`)
+#### VS Code Copilot 全局（`~/.copilot/mcp-config.json`，Copilot Harness / Copilot CLI 标准）
+```json
+{
+  "mcpServers": {
+    "zhifangsi": {
+      "type": "local",
+      "command": "npx",
+      "args": ["-y", "zhifangsi", "mcp"],
+      "tools": ["*"]
+    }
+  }
+}
+```
+> 使用 `zhifangsi install --copilot` 时，会同步将 8 项 Agent Skills 写入 `~/.copilot/skills/`、全局指引写入 `~/.copilot/instructions/zhifangsi.instructions.md`、MCP 配置写入 `~/.copilot/mcp-config.json`；并且 MCP Server 原生支持 **MCP Roots** 自动感知当前打开的 VS Code 工作区根目录。若仍使用旧版 VS Code Local harness，可附加 `--vscode-profile` 同步写入 `Code/User/mcp.json`。
+
+#### VS Code 工作区（`.vscode/mcp.json`）
 ```json
 {
   "servers": {

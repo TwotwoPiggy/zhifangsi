@@ -4,7 +4,14 @@ import * as path from 'path'
 import * as os from 'os'
 import { execFileSync } from 'child_process'
 // @ts-expect-error ESM script without declaration file
-import { runInstaller, loadInstallManifest, getAntigravityManifestPath } from '../scripts/install-antigravity.mjs'
+import {
+  runInstaller,
+  loadInstallManifest,
+  getAntigravityManifestPath,
+  resolveCopilotHome,
+  resolveVscodeUserDir,
+  parseJsoncObject,
+} from '../scripts/install-antigravity.mjs'
 // @ts-expect-error ESM script without declaration file
 import { runUpdater, parseUpdateArgs } from '../scripts/zhifangsi-update.mjs'
 
@@ -488,4 +495,196 @@ describe('zhifangsi update & multi-host install manifest', () => {
     expect(fromGit.ok).toBe(true)
     expect(gitRemoteCalls).toContain('npm install -g git+https://github.com/TwotwoPiggy/zhifangsi.git#main')
   })
+
+  it('installs and uninstalls VS Code Copilot global mode (Copilot harness + JSONC preservation + optional legacy profile)', () => {
+    const repoRoot = path.resolve('.')
+    const copilotHome = resolveCopilotHome(fakeHome)
+    const vscodeUserDir = resolveVscodeUserDir(fakeHome)
+    const mcpConfigFile = path.join(copilotHome, 'mcp-config.json')
+
+    // 预置带注释和尾随逗号的 JSONC 现有配置，确认不会被破坏
+    fs.mkdirSync(copilotHome, { recursive: true })
+    fs.writeFileSync(
+      mcpConfigFile,
+      `// 现有 Copilot MCP 配置\n{\n  "mcpServers": {\n    "existing-tool": {\n      "type": "local",\n      "command": "npx",\n      "args": ["-y", "other-mcp"], // trailing comma test\n    },\n  },\n}\n`,
+      'utf-8'
+    )
+
+    // 验证 parseJsoncObject 正确保留 URL 字符串中的双斜杠
+    const parsedCheck = parseJsoncObject('{"url": "http://127.0.0.1:19828", /* comment */ "ok": true,}')
+    expect(parsedCheck).toEqual({ url: 'http://127.0.0.1:19828', ok: true })
+
+    // 1. 安装 VS Code Copilot 全局集成（默认 Copilot harness，不双写旧 User Profile）
+    const res = runInstaller(['--copilot'], {
+      homeDir: fakeHome,
+      projectRoot: repoRoot,
+      cwd: tmpRoot,
+      skipBuild: true,
+    })
+    expect(res.installedRuntimes).toEqual(['copilot'])
+    expect(res.installedWorkspaces).toEqual([])
+
+    // 验证 8 项 Agent Skills 已写入 ~/.copilot/skills/
+    expect(fs.existsSync(path.join(copilotHome, 'skills', 'zhifangsi', 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(copilotHome, 'skills', 'zhifangsi-map', 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(copilotHome, 'skills', 'zhifangsi-update', 'SKILL.md'))).toBe(true)
+
+    // 验证全局 Custom Instructions
+    const instructionsPath = path.join(copilotHome, 'instructions', 'zhifangsi.instructions.md')
+    expect(fs.existsSync(instructionsPath)).toBe(true)
+    expect(fs.readFileSync(instructionsPath, 'utf-8')).toContain("applyTo: '**'")
+
+    // 验证 ~/.copilot/mcp-config.json 既新增 zhifangsi 又保留 existing-tool
+    const mcpCfg = JSON.parse(fs.readFileSync(mcpConfigFile, 'utf-8'))
+    expect(mcpCfg.mcpServers['existing-tool']).toBeDefined()
+    expect(mcpCfg.mcpServers.zhifangsi).toMatchObject({
+      type: 'local',
+      tools: ['*'],
+    })
+    // 默认未启用 --vscode-profile，不生成旧 Code/User/mcp.json
+    expect(fs.existsSync(path.join(vscodeUserDir, 'mcp.json'))).toBe(false)
+
+    // 2. 追加 --vscode-profile 启用经典 VS Code User Profile 兼容
+    runInstaller(['--copilot', '--vscode-profile'], {
+      homeDir: fakeHome,
+      projectRoot: repoRoot,
+      cwd: tmpRoot,
+      skipBuild: true,
+    })
+    const legacyMcpPath = path.join(vscodeUserDir, 'mcp.json')
+    const legacyInstrPath = path.join(vscodeUserDir, 'prompts', 'zhifangsi.instructions.md')
+    expect(fs.existsSync(legacyMcpPath)).toBe(true)
+    expect(fs.existsSync(legacyInstrPath)).toBe(true)
+    const legacyMcpCfg = JSON.parse(fs.readFileSync(legacyMcpPath, 'utf-8'))
+    expect(legacyMcpCfg.servers.zhifangsi.type).toBe('stdio')
+
+    const manifest = loadInstallManifest(fakeHome)
+    expect(manifest.runtimes.copilot?.legacyProfileEnabled).toBe(true)
+    expect(manifest.runtimes.copilot?.skills).toContain('zhifangsi-init')
+
+    // 3. 卸载 --copilot，验证清理干净且保留 existing-tool
+    runInstaller(['--uninstall', '--copilot'], {
+      homeDir: fakeHome,
+      projectRoot: repoRoot,
+      cwd: tmpRoot,
+      skipBuild: true,
+    })
+    expect(fs.existsSync(path.join(copilotHome, 'skills', 'zhifangsi'))).toBe(false)
+    expect(fs.existsSync(instructionsPath)).toBe(false)
+    expect(fs.existsSync(legacyInstrPath)).toBe(false)
+    const afterMcpCfg = JSON.parse(fs.readFileSync(mcpConfigFile, 'utf-8'))
+    expect(afterMcpCfg.mcpServers['existing-tool']).toBeDefined()
+    expect(afterMcpCfg.mcpServers.zhifangsi).toBeUndefined()
+    const afterLegacyMcp = JSON.parse(fs.readFileSync(legacyMcpPath, 'utf-8'))
+    expect(afterLegacyMcp.servers.zhifangsi).toBeUndefined()
+    expect(loadInstallManifest(fakeHome).runtimes.copilot).toBeUndefined()
+  })
+
+  it('installs VS Code Copilot workspace kit (--vscode / --copilot --local), supports --vscode --global, and avoids duplicate skills on --all', () => {
+    const repoRoot = path.resolve('.')
+    const wsProject = path.join(tmpRoot, 'ws-copilot')
+    const wsAll = path.join(tmpRoot, 'ws-all')
+    fs.mkdirSync(wsProject, { recursive: true })
+    fs.mkdirSync(wsAll, { recursive: true })
+
+    // 预置用户自定义 skill，卸载时绝不能误删
+    const customSkillDir = path.join(wsProject, '.github', 'skills', 'my-team-skill')
+    fs.mkdirSync(customSkillDir, { recursive: true })
+    fs.writeFileSync(path.join(customSkillDir, 'SKILL.md'), '---\nname: my-team-skill\n---\n', 'utf-8')
+
+    // 1. 工作区模式：--copilot --local 等价于 --vscode，部署完整套件
+    const wsRes = runInstaller(['--copilot', '--local'], {
+      homeDir: fakeHome,
+      projectRoot: repoRoot,
+      cwd: wsProject,
+      skipBuild: true,
+    })
+    expect(wsRes.installedRuntimes).toEqual([])
+    expect(wsRes.installedWorkspaces).toHaveLength(1)
+    expect(wsRes.installedWorkspaces[0].runtime).toBe('vscode')
+    expect(fs.existsSync(path.join(wsProject, '.vscode', 'mcp.json'))).toBe(true)
+    expect(fs.existsSync(path.join(wsProject, '.github', 'skills', 'zhifangsi', 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(wsProject, '.github', 'skills', 'zhifangsi-check', 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(wsProject, '.github', 'instructions', 'zhifangsi.instructions.md'))).toBe(true)
+
+    // 卸载工作区模式，保留用户自定义 skill
+    runInstaller(['--uninstall', '--vscode'], {
+      homeDir: fakeHome,
+      projectRoot: repoRoot,
+      cwd: wsProject,
+      skipBuild: true,
+    })
+    expect(fs.existsSync(path.join(wsProject, '.github', 'skills', 'zhifangsi'))).toBe(false)
+    expect(fs.existsSync(path.join(wsProject, '.github', 'instructions', 'zhifangsi.instructions.md'))).toBe(false)
+    expect(fs.existsSync(path.join(customSkillDir, 'SKILL.md'))).toBe(true)
+
+    // 2. --vscode --global 等价于全局 Copilot 安装，不污染当前目录
+    const globalVscodeRes = runInstaller(['--vscode', '--global'], {
+      homeDir: fakeHome,
+      projectRoot: repoRoot,
+      cwd: wsProject,
+      skipBuild: true,
+    })
+    expect(globalVscodeRes.installedRuntimes).toEqual(['copilot'])
+    expect(globalVscodeRes.installedWorkspaces).toEqual([])
+    expect(fs.existsSync(path.join(resolveCopilotHome(fakeHome), 'mcp-config.json'))).toBe(true)
+
+    // 3. --all 安装全局 Antigravity + 全局 Copilot + 工作区 MCP，且跳过重复工作区 .github/skills 防斜杠命令重复
+    const allRes = runInstaller(['--all'], {
+      homeDir: fakeHome,
+      projectRoot: repoRoot,
+      cwd: wsAll,
+      skipBuild: true,
+    })
+    expect(allRes.installedRuntimes.sort()).toEqual(['antigravity', 'copilot'])
+    expect(fs.existsSync(path.join(wsAll, '.vscode', 'mcp.json'))).toBe(true)
+    expect(fs.existsSync(path.join(wsAll, '.github', 'skills', 'zhifangsi'))).toBe(false)
+  })
+
+  it('re-injects global VS Code Copilot runtime (including --vscode-profile) during zhifangsi update', async () => {
+    const { seedDir, cloneDir } = initMockGitFixture(tmpRoot)
+    pushRemoteRelease(seedDir, '1.2.0', { tag: true })
+
+    const manifestPath = path.join(fakeHome, '.zhifangsi', 'install-manifest.json')
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true })
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          version: '1.0.0',
+          updatedAt: new Date().toISOString(),
+          source: cloneDir,
+          runtimes: {
+            copilot: {
+              runtime: 'copilot',
+              scope: 'global',
+              legacyProfileEnabled: true,
+              version: '1.0.0',
+            },
+          },
+          workspaces: [],
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    )
+
+    const installerCalls: Array<{ args: string[]; cwd: string }> = []
+    const res = await runUpdater([], {
+      packageRoot: cloneDir,
+      homeDir: fakeHome,
+      log: noop,
+      warn: noop,
+      error: noop,
+      silentSubprocess: true,
+      runShell: () => '',
+      runInstallerProcess: (_scriptPath: string, args: string[], opts: { cwd: string }) => {
+        installerCalls.push({ args, cwd: opts.cwd })
+      },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(installerCalls).toEqual([{ args: ['--copilot', '--vscode-profile'], cwd: cloneDir }])
+  }, 20000)
 })

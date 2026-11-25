@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { createZhifangsiMcpServer } from '../src/mcp/server'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { pathToFileURL } from 'url'
+import {
+  createZhifangsiMcpServer,
+  fileUriToLocalPath,
+  resolveDefaultTargetDir,
+} from '../src/mcp/server'
 import { LLMWikiBridge } from '../src/bridge/client'
 import {
   buildWorkspaceGraph,
@@ -138,5 +146,45 @@ describe('Zhifangsi MCP Server & Tools', () => {
     const impact = analyzeChangeImpact(process.cwd(), ['src/ast/types.ts'], graph)
     expect(impact.directCallers.length).toBeGreaterThan(0)
     expect(impact.deepAffectedFiles.length).toBeGreaterThan(0)
+  })
+
+  it('resolves workspace target_dir via MCP roots capability for VS Code Copilot global MCP', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zhifangsi-roots-test-'))
+    try {
+      const rootUri = pathToFileURL(tmpDir).href
+      expect(fileUriToLocalPath(rootUri)).toBe(path.resolve(tmpDir))
+      expect(fileUriToLocalPath('https://example.com/repo')).toBeNull()
+
+      const mockServerWithRoots = {
+        getClientCapabilities: () => ({ roots: { listChanged: true } }),
+        listRoots: async () => ({ roots: [{ uri: rootUri, name: 'test-ws' }] }),
+      }
+
+      // 未显式传 target_dir 时，自动采用客户端 MCP roots
+      const fromRoots = await resolveDefaultTargetDir(mockServerWithRoots)
+      expect(fromRoots).toBe(path.resolve(tmpDir))
+
+      // 显式传入 target_dir 时优先级最高
+      const explicitDir = path.resolve('.')
+      const fromExplicit = await resolveDefaultTargetDir(mockServerWithRoots, explicitDir)
+      expect(fromExplicit).toBe(explicitDir)
+
+      // 客户端不支持 roots 或 listRoots 失败时安全回退 process.cwd()
+      const mockServerNoRoots = {
+        getClientCapabilities: () => ({}),
+        listRoots: async () => ({ roots: [] }),
+      }
+      expect(await resolveDefaultTargetDir(mockServerNoRoots)).toBe(process.cwd())
+
+      const mockServerFailingRoots = {
+        getClientCapabilities: () => ({ roots: {} }),
+        listRoots: async () => {
+          throw new Error('roots unsupported')
+        },
+      }
+      expect(await resolveDefaultTargetDir(mockServerFailingRoots)).toBe(process.cwd())
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 })

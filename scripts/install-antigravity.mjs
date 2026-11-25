@@ -3,10 +3,13 @@
 // 职方司 (zhifangsi) - 跨环境安装与配置集成器 (支持 NPM 全局 / npx / 本地源码)
 //
 // 作用：
-// 1. 注册 Antigravity 核心技能与子技能 -> ~/.gemini/antigravity/skills/
-// 2. 注入 Antigravity MCP Server 配置 -> ~/.gemini/config/mcp_config.json 与 ~/.gemini/antigravity/mcp_config.json
-// 3. 注册 Antigravity MCP 延迟加载工具架构 -> ~/.gemini/antigravity/mcp/zhifangsi/
-// 4. 可选支持注入本地项目 IDE 配置 (--vscode / --qoder / --cursor / --claude) 及一键卸载 (--uninstall)
+// 1. Antigravity 全局：注册 Skills (~/.gemini/antigravity/skills/)、MCP 配置与延迟加载工具 Schema
+// 2. VS Code Copilot 全局 (--copilot / --vscode --global)：
+//    - 注册全套 Agent Skills (~/.copilot/skills/)，自动按需加载并暴露 /zhifangsi* 斜杠命令
+//    - 注入全局 Custom Instructions (~/.copilot/instructions/zhifangsi.instructions.md)
+//    - 注入 Copilot Harness 全局 MCP 配置 (~/.copilot/mcp-config.json)
+//    - 可选 --vscode-profile / --legacy-mcp 额外同步经典 VS Code User Profile (Code/User/mcp.json & prompts/)
+// 3. 工作区级 IDE 集成 (--vscode / --copilot --local / --qoder / --claude / --cursor) 及一键卸载 (--uninstall)
 
 import * as fs from 'fs'
 import * as path from 'path'
@@ -22,9 +25,9 @@ function getPackageVersion(root = projectRoot) {
   try {
     const pkgPath = path.join(root, 'package.json')
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
-    return pkg.version || '1.1.0'
+    return pkg.version || '1.1.2'
   } catch {
-    return '1.1.0'
+    return '1.1.2'
   }
 }
 
@@ -37,6 +40,33 @@ export function resolveHomeDir(customHomeDir) {
   if (customHomeDir) return path.resolve(customHomeDir)
   if (process.env.ZHIFANGSI_HOME_DIR) return path.resolve(process.env.ZHIFANGSI_HOME_DIR)
   return process.env.USERPROFILE || process.env.HOME || os.homedir() || ''
+}
+
+export function resolveCopilotHome(customHomeDir, customCopilotHome) {
+  if (customCopilotHome) return path.resolve(customCopilotHome)
+  if (process.env.ZHIFANGSI_COPILOT_HOME) return path.resolve(process.env.ZHIFANGSI_COPILOT_HOME)
+  const isSandboxedHome = Boolean(customHomeDir || process.env.ZHIFANGSI_HOME_DIR)
+  if (!isSandboxedHome && process.env.COPILOT_HOME) {
+    return path.resolve(process.env.COPILOT_HOME)
+  }
+  return path.join(resolveHomeDir(customHomeDir), '.copilot')
+}
+
+export function resolveVscodeUserDir(customHomeDir, customVscodeUserDir) {
+  if (customVscodeUserDir) return path.resolve(customVscodeUserDir)
+  if (process.env.ZHIFANGSI_VSCODE_USER_DIR) return path.resolve(process.env.ZHIFANGSI_VSCODE_USER_DIR)
+  const isSandboxedHome = Boolean(customHomeDir || process.env.ZHIFANGSI_HOME_DIR)
+  const homeDir = resolveHomeDir(customHomeDir)
+  if (process.platform === 'win32') {
+    if (!isSandboxedHome && process.env.APPDATA) {
+      return path.join(process.env.APPDATA, 'Code', 'User')
+    }
+    return path.join(homeDir, 'AppData', 'Roaming', 'Code', 'User')
+  }
+  if (process.platform === 'darwin') {
+    return path.join(homeDir, 'Library', 'Application Support', 'Code', 'User')
+  }
+  return path.join(homeDir, '.config', 'Code', 'User')
 }
 
 export function getInstallManifestPath(customHomeDir) {
@@ -104,10 +134,104 @@ function removeWorkspaceRecord(manifest, runtime, cwd) {
   )
 }
 
+/**
+ * 兼容 VS Code JSONC（含行注释、块注释、尾随逗号）的安全 JSON 对象解析
+ */
+export function parseJsoncObject(raw, fallback = {}) {
+  if (!raw || typeof raw !== 'string') return { ...fallback }
+  const trimmed = raw.trim()
+  if (!trimmed) return { ...fallback }
+
+  try {
+    const direct = JSON.parse(trimmed)
+    return direct && typeof direct === 'object' && !Array.isArray(direct) ? direct : { ...fallback }
+  } catch {
+    // 尝试剥离 JSONC 注释与尾随逗号
+  }
+
+  let out = ''
+  let inString = false
+  let escaped = false
+  let inLineComment = false
+  let inBlockComment = false
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i]
+    const next = trimmed[i + 1]
+
+    if (inLineComment) {
+      if (ch === '\n') {
+        inLineComment = false
+        out += ch
+      }
+      continue
+    }
+
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') {
+        inBlockComment = false
+        i++
+      }
+      continue
+    }
+
+    if (inString) {
+      out += ch
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (ch === '"') {
+      inString = true
+      out += ch
+    } else if (ch === '/' && next === '/') {
+      inLineComment = true
+      i++
+    } else if (ch === '/' && next === '*') {
+      inBlockComment = true
+      i++
+    } else {
+      out += ch
+    }
+  }
+
+  // 移除字符串外的尾随逗号（如 , } 或 , ]）
+  const cleaned = out.replace(/,(\s*[}\]])/g, '$1')
+  try {
+    const parsed = JSON.parse(cleaned)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { ...fallback }
+  } catch {
+    return { ...fallback }
+  }
+}
+
+function upsertServerInJsonFile(filePath, rootKey, serverName, serverEntry) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  let cfg = { [rootKey]: {} }
+  if (fs.existsSync(filePath)) {
+    try {
+      cfg = parseJsoncObject(fs.readFileSync(filePath, 'utf-8'), { [rootKey]: {} })
+    } catch {
+      cfg = { [rootKey]: {} }
+    }
+  }
+  if (!cfg[rootKey] || typeof cfg[rootKey] !== 'object' || Array.isArray(cfg[rootKey])) {
+    cfg[rootKey] = {}
+  }
+  cfg[rootKey][serverName] = serverEntry
+  fs.writeFileSync(filePath, JSON.stringify(cfg, null, 2) + '\n', 'utf-8')
+}
+
 function removeServerFromJsonFile(filePath, rootKey, serverName) {
   if (!fs.existsSync(filePath)) return false
   try {
-    const cfg = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    const cfg = parseJsoncObject(fs.readFileSync(filePath, 'utf-8'), {})
     if (cfg[rootKey] && cfg[rootKey][serverName]) {
       delete cfg[rootKey][serverName]
       fs.writeFileSync(filePath, JSON.stringify(cfg, null, 2) + '\n', 'utf-8')
@@ -117,6 +241,84 @@ function removeServerFromJsonFile(filePath, rootKey, serverName) {
     // ignore invalid json
   }
   return false
+}
+
+function collectBuiltinSkillNames(pkgRoot) {
+  const names = new Set(['zhifangsi'])
+  const skillsSourceFolder = path.join(pkgRoot, 'skills')
+  if (fs.existsSync(skillsSourceFolder)) {
+    for (const entry of fs.readdirSync(skillsSourceFolder, { withFileTypes: true })) {
+      if (entry.isDirectory() && fs.existsSync(path.join(skillsSourceFolder, entry.name, 'SKILL.md'))) {
+        names.add(entry.name)
+      }
+    }
+  }
+  return names
+}
+
+function syncSkillsDirectory(pkgRoot, targetSkillsBaseDir) {
+  const installedSkills = []
+  const skippedSymlinks = []
+
+  const mainSkillDir = path.join(targetSkillsBaseDir, 'zhifangsi')
+  const sourceMainSkill = path.join(pkgRoot, 'SKILL.md')
+  if (fs.existsSync(sourceMainSkill)) {
+    if (fs.existsSync(mainSkillDir) && fs.lstatSync(mainSkillDir).isSymbolicLink()) {
+      skippedSymlinks.push(mainSkillDir)
+    } else {
+      fs.mkdirSync(mainSkillDir, { recursive: true })
+      const targetMainSkill = path.join(mainSkillDir, 'SKILL.md')
+      fs.copyFileSync(sourceMainSkill, targetMainSkill)
+      installedSkills.push('zhifangsi')
+      console.log(`   \x1b[32m✔ [主技能]\x1b[0m ${targetMainSkill} (/zhifangsi)`)
+    }
+  }
+
+  const skillsSourceFolder = path.join(pkgRoot, 'skills')
+  if (fs.existsSync(skillsSourceFolder)) {
+    const subEntries = fs.readdirSync(skillsSourceFolder, { withFileTypes: true })
+    for (const entry of subEntries) {
+      if (!entry.isDirectory()) continue
+      const subSkillName = entry.name
+      const subSourceDir = path.join(skillsSourceFolder, subSkillName)
+      const subSourceSkill = path.join(subSourceDir, 'SKILL.md')
+      if (!fs.existsSync(subSourceSkill)) continue
+
+      const subTargetDir = path.join(targetSkillsBaseDir, subSkillName)
+      if (fs.existsSync(subTargetDir) && fs.lstatSync(subTargetDir).isSymbolicLink()) {
+        skippedSymlinks.push(subTargetDir)
+        continue
+      }
+      fs.mkdirSync(subTargetDir, { recursive: true })
+      fs.cpSync(subSourceDir, subTargetDir, { recursive: true, force: true })
+      installedSkills.push(subSkillName)
+      const subTargetSkill = path.join(subTargetDir, 'SKILL.md')
+      console.log(`   \x1b[32m✔ [指令技能]\x1b[0m ${subTargetSkill} (/${subSkillName})`)
+    }
+  }
+
+  if (skippedSymlinks.length > 0) {
+    console.log(`   \x1b[33m⚠ 已跳过符号链接技能目录 (${skippedSymlinks.length} 处)，未覆写。\x1b[0m`)
+  }
+
+  return installedSkills
+}
+
+function removeSkillsDirectory(pkgRoot, targetSkillsBaseDir, recordedSkills = []) {
+  const skillSet = collectBuiltinSkillNames(pkgRoot)
+  if (Array.isArray(recordedSkills)) {
+    for (const s of recordedSkills) skillSet.add(s)
+  }
+  const removed = []
+  for (const sName of skillSet) {
+    const targetDir = path.join(targetSkillsBaseDir, sName)
+    if (fs.existsSync(targetDir)) {
+      fs.rmSync(targetDir, { recursive: true, force: true })
+      removed.push(targetDir)
+      console.log(`   \x1b[32m✔ 已移除技能:\x1b[0m ${targetDir}`)
+    }
+  }
+  return removed
 }
 
 const TOOL_DEFINITIONS = [
@@ -393,6 +595,38 @@ const INSTRUCTIONS_CONTENT = `# 兵部职方司 (Zhifangsi) MCP 工具使用指�
 9. **架构知识与符号检索**：调用 \`zhifangsi_search\` 在架构 Wiki 与 AST 导出符号表中混合检索。
 `
 
+export const COPILOT_INSTRUCTIONS_CONTENT = `---
+name: zhifangsi
+description: 兵部职方司代码库战略舆图、局部邻域骨架、变更爆炸半径与架构守则 MCP 工具指南
+applyTo: '**'
+---
+
+# 兵部职方司 (Zhifangsi) — VS Code Copilot 协作指南
+
+当前环境已集成 **兵部职方司 (zhifangsi)** MCP 军机工具集与 Agent Skills。在分析大型代码库、规划重构或修改核心代码前，优先使用职方司工具以节省上下文 Token 并防越权/撞车：
+
+## 何时主动调用 \`zhifangsi_*\` MCP 工具
+- **跨项目寻址（L1 路由）**：先调用 \`zhifangsi_repos\` 定位目标仓库与 Wiki 路径，避免盲扫多仓库。
+- **首次接入/初始化知识库**：调用 \`zhifangsi_init\` 一键初始化 \`schema.md\` / \`wiki/\`、AST 模块建档与代码骨架。
+- **全局架构摸底**：调用 \`zhifangsi_map\` 获取 PageRank 核心关隘（Hubs）、循环依赖预警、已注册模块与守则状态。
+- **低 Token 阅读模块契约**：调用 \`zhifangsi_skeleton\`（传 \`target\`）提取目标文件/模块与 1 跳邻居骨架，可节省 85%+ Token。
+- **改前爆炸半径评估**：修改核心文件前调用 \`zhifangsi_impact\`，识别直接/深层调用方、受波及模块与回归业务流。
+- **改后/提交前架构守则巡检**：调用 \`zhifangsi_check_invariants\` 拦截跨层越权调用、循环依赖与 Wiki 舆图失真（Drift）。
+- **模块/业务流/符号检索**：按需调用 \`zhifangsi_module_info\`、\`zhifangsi_workflow_trace\`、\`zhifangsi_search\`、\`zhifangsi_bootstrap\`、\`zhifangsi_bridge_status\`。
+
+> 提示：调用 \`zhifangsi_*\` 工具时，建议显式传入当前工作区根路径作为 \`target_dir\`（若省略将自动通过 MCP Roots 或当前工作目录解析）。
+
+## 可用斜杠技能（Agent Skills）
+- \`/zhifangsi\`：职方司总控与架构分析
+- \`/zhifangsi-init\`：一键初始化项目架构知识库与 LLM Wiki 接入
+- \`/zhifangsi-map\`：测绘并持久化生成 \`CODEBASE_MAP.md\`
+- \`/zhifangsi-check\`：关防守则、循环依赖与舆图失真静态巡检
+- \`/zhifangsi-skeleton\`：提取高信息密度代码骨架
+- \`/zhifangsi-trace\`：追踪核心业务流水线调用时序
+- \`/zhifangsi-sync\`：增量同步本地架构 Wiki 至 LLM Wiki 桌面端
+- \`/zhifangsi-update\`：检查并升级职方司及多宿主配置
+`
+
 export function runInstaller(rawArgs = [], options = {}) {
   const pkgRoot = options.projectRoot ? path.resolve(options.projectRoot) : projectRoot
   const version = getPackageVersion(pkgRoot)
@@ -403,22 +637,43 @@ export function runInstaller(rawArgs = [], options = {}) {
   }
 
   const cwd = options.cwd ? path.resolve(options.cwd) : process.cwd()
+  const copilotHome = resolveCopilotHome(options.homeDir, options.copilotHome)
+  const vscodeUserDir = resolveVscodeUserDir(options.homeDir, options.vscodeUserDir)
+
   const isUninstall = rawArgs.includes('--uninstall') || rawArgs.includes('-u')
-  const wantVscode = rawArgs.includes('--vscode') || rawArgs.includes('--all')
-  const wantQoder = rawArgs.includes('--qoder') || rawArgs.includes('--claude') || rawArgs.includes('--all')
-  const qoderOrClaudeRuntime =
-    rawArgs.includes('--claude') && !rawArgs.includes('--qoder') ? 'claude' : 'qoder'
-  const wantCursor = rawArgs.includes('--cursor') || rawArgs.includes('--all')
-  const hasExplicitIdeOnly =
-    (rawArgs.includes('--vscode') ||
-      rawArgs.includes('--qoder') ||
-      rawArgs.includes('--claude') ||
-      rawArgs.includes('--cursor')) &&
-    !rawArgs.includes('--antigravity') &&
-    !rawArgs.includes('--all') &&
-    !rawArgs.includes('--global') &&
-    !rawArgs.includes('-g')
-  const wantAntigravity = !hasExplicitIdeOnly
+  const hasGlobal = rawArgs.includes('--global') || rawArgs.includes('-g')
+  const hasLocal = rawArgs.includes('--local') || rawArgs.includes('-l')
+  const hasAll = rawArgs.includes('--all')
+  const hasAntigravityFlag = rawArgs.includes('--antigravity')
+  const hasCopilotFlag = rawArgs.includes('--copilot') || rawArgs.includes('--vscode-copilot')
+  const hasVscodeFlag = rawArgs.includes('--vscode')
+  const hasVscodeProfileFlag =
+    rawArgs.includes('--vscode-profile') || rawArgs.includes('--legacy-mcp')
+  const hasQoderFlag = rawArgs.includes('--qoder')
+  const hasClaudeFlag = rawArgs.includes('--claude')
+  const hasCursorFlag = rawArgs.includes('--cursor')
+
+  const hasExplicitTarget =
+    hasAll ||
+    hasAntigravityFlag ||
+    hasCopilotFlag ||
+    hasVscodeFlag ||
+    hasQoderFlag ||
+    hasClaudeFlag ||
+    hasCursorFlag
+
+  const wantCopilotGlobal =
+    hasAll ||
+    (hasCopilotFlag && (!hasLocal || hasGlobal)) ||
+    (hasVscodeFlag && hasGlobal)
+  const wantVscodeWorkspace =
+    hasAll ||
+    (hasVscodeFlag && (!hasGlobal || hasLocal)) ||
+    (hasCopilotFlag && hasLocal)
+  const wantQoder = hasQoderFlag || hasClaudeFlag || hasAll
+  const qoderOrClaudeRuntime = hasClaudeFlag && !hasQoderFlag ? 'claude' : 'qoder'
+  const wantCursor = hasCursorFlag || hasAll
+  const wantAntigravity = hasAll || hasAntigravityFlag || !hasExplicitTarget
 
   const geminiRoot = path.join(homeDir, '.gemini')
   const skillsBaseDir = path.join(geminiRoot, 'antigravity', 'skills')
@@ -428,6 +683,13 @@ export function runInstaller(rawArgs = [], options = {}) {
     path.join(geminiRoot, 'config', 'mcp_config.json'),
     path.join(geminiRoot, 'antigravity', 'mcp_config.json'),
   ]
+
+  const copilotSkillsDir = path.join(copilotHome, 'skills')
+  const copilotInstructionsFile = path.join(copilotHome, 'instructions', 'zhifangsi.instructions.md')
+  const copilotMcpConfigFile = path.join(copilotHome, 'mcp-config.json')
+  const vscodeUserMcpFile = path.join(vscodeUserDir, 'mcp.json')
+  const vscodeUserInstructionsFile = path.join(vscodeUserDir, 'prompts', 'zhifangsi.instructions.md')
+
   const mcpServerScript = path.join(pkgRoot, 'dist', 'mcp', 'server.js')
   const nodePath = process.execPath
   const manifest = loadInstallManifest(homeDir)
@@ -436,25 +698,16 @@ export function runInstaller(rawArgs = [], options = {}) {
   if (isUninstall) {
     console.log(`\x1b[36m[职方司]\x1b[0m 正在卸载职方司 (zhifangsi v${version}) 集成配置...\n`)
 
+    const shouldUninstallCopilotGlobal =
+      wantCopilotGlobal ||
+      (!hasExplicitTarget &&
+        (Boolean(manifest.runtimes?.copilot) ||
+          fs.existsSync(path.join(copilotSkillsDir, 'zhifangsi')) ||
+          fs.existsSync(copilotInstructionsFile)))
+
     if (wantAntigravity) {
       // 1. 移除 Skills（合并源码目录与已记录清单，防止漏删旧版本子技能）
-      const skillSet = new Set(['zhifangsi'])
-      const skillsSourceFolder = path.join(pkgRoot, 'skills')
-      if (fs.existsSync(skillsSourceFolder)) {
-        for (const entry of fs.readdirSync(skillsSourceFolder, { withFileTypes: true })) {
-          if (entry.isDirectory()) skillSet.add(entry.name)
-        }
-      }
-      if (Array.isArray(manifest.runtimes?.antigravity?.skills)) {
-        for (const s of manifest.runtimes.antigravity.skills) skillSet.add(s)
-      }
-      for (const sName of skillSet) {
-        const targetDir = path.join(skillsBaseDir, sName)
-        if (fs.existsSync(targetDir)) {
-          fs.rmSync(targetDir, { recursive: true, force: true })
-          console.log(`   \x1b[32m✔ 已移除技能:\x1b[0m ${targetDir}`)
-        }
-      }
+      removeSkillsDirectory(pkgRoot, skillsBaseDir, manifest.runtimes?.antigravity?.skills)
 
       // 2. 移除 MCP Config
       for (const cfgFile of mcpConfigFiles) {
@@ -477,10 +730,58 @@ export function runInstaller(rawArgs = [], options = {}) {
       delete manifest.runtimes.antigravity
     }
 
-    if (wantVscode) {
+    if (shouldUninstallCopilotGlobal) {
+      const prevCopilot = manifest.runtimes?.copilot
+      const targetCopilotHome = prevCopilot?.copilotHome || copilotHome
+      const targetCopilotSkillsDir = path.join(targetCopilotHome, 'skills')
+      const targetCopilotInstructions =
+        prevCopilot?.instructionsFile ||
+        path.join(targetCopilotHome, 'instructions', 'zhifangsi.instructions.md')
+      const targetCopilotMcp =
+        prevCopilot?.mcpConfigFile || path.join(targetCopilotHome, 'mcp-config.json')
+
+      removeSkillsDirectory(pkgRoot, targetCopilotSkillsDir, prevCopilot?.skills)
+
+      if (fs.existsSync(targetCopilotInstructions)) {
+        fs.unlinkSync(targetCopilotInstructions)
+        console.log(`   \x1b[32m✔ [VS Code Copilot]\x1b[0m 已移除全局指令: ${targetCopilotInstructions}`)
+      }
+
+      if (removeServerFromJsonFile(targetCopilotMcp, 'mcpServers', 'zhifangsi')) {
+        console.log(`   \x1b[32m✔ [VS Code Copilot]\x1b[0m 已清理全局 MCP 配置: ${targetCopilotMcp}`)
+      }
+
+      const targetVscodeUserDir = prevCopilot?.vscodeUserDir || vscodeUserDir
+      const legacyMcp = path.join(targetVscodeUserDir, 'mcp.json')
+      const legacyInstructions = path.join(targetVscodeUserDir, 'prompts', 'zhifangsi.instructions.md')
+      if (hasVscodeProfileFlag || prevCopilot?.legacyProfileEnabled) {
+        if (removeServerFromJsonFile(legacyMcp, 'servers', 'zhifangsi')) {
+          console.log(`   \x1b[32m✔ [VS Code Profile]\x1b[0m 已清理兼容 MCP 配置: ${legacyMcp}`)
+        }
+        if (fs.existsSync(legacyInstructions)) {
+          fs.unlinkSync(legacyInstructions)
+          console.log(`   \x1b[32m✔ [VS Code Profile]\x1b[0m 已移除兼容指令: ${legacyInstructions}`)
+        }
+      }
+
+      delete manifest.runtimes.copilot
+    }
+
+    if (wantVscodeWorkspace) {
       const vscodeMcpFile = path.join(cwd, '.vscode', 'mcp.json')
+      const wsSkillsDir = path.join(cwd, '.github', 'skills')
+      const wsInstructionsFile = path.join(cwd, '.github', 'instructions', 'zhifangsi.instructions.md')
+      const wsRecord = manifest.workspaces.find(
+        (w) => w.runtime === 'vscode' && normalizePathKey(w.cwd) === normalizePathKey(cwd)
+      )
+
       if (removeServerFromJsonFile(vscodeMcpFile, 'servers', 'zhifangsi')) {
         console.log(`   \x1b[32m✔ [VS Code]\x1b[0m 已清理 ${vscodeMcpFile}`)
+      }
+      removeSkillsDirectory(pkgRoot, wsSkillsDir, wsRecord?.skills)
+      if (fs.existsSync(wsInstructionsFile)) {
+        fs.unlinkSync(wsInstructionsFile)
+        console.log(`   \x1b[32m✔ [VS Code]\x1b[0m 已移除工作区指令: ${wsInstructionsFile}`)
       }
       removeWorkspaceRecord(manifest, 'vscode', cwd)
     }
@@ -544,37 +845,9 @@ export function runInstaller(rawArgs = [], options = {}) {
   if (wantAntigravity) {
     // 1. 安装 Skill 技能（主技能与专项子技能）
     console.log(`1. 正在同步 Antigravity 技能组 (Skills)...`)
-    const installedSkills = []
+    let installedSkills = []
     try {
-      const mainSkillDir = path.join(skillsBaseDir, 'zhifangsi')
-      fs.mkdirSync(mainSkillDir, { recursive: true })
-      const sourceMainSkill = path.join(pkgRoot, 'SKILL.md')
-      const targetMainSkill = path.join(mainSkillDir, 'SKILL.md')
-      if (fs.existsSync(sourceMainSkill)) {
-        fs.copyFileSync(sourceMainSkill, targetMainSkill)
-        installedSkills.push('zhifangsi')
-        console.log(`   \x1b[32m✔ [主技能]\x1b[0m ${targetMainSkill} (/zhifangsi)`)
-      }
-
-      const skillsSourceFolder = path.join(pkgRoot, 'skills')
-      if (fs.existsSync(skillsSourceFolder)) {
-        const subEntries = fs.readdirSync(skillsSourceFolder, { withFileTypes: true })
-        for (const entry of subEntries) {
-          if (entry.isDirectory()) {
-            const subSkillName = entry.name
-            const subSourceDir = path.join(skillsSourceFolder, subSkillName)
-            const subSourceSkill = path.join(subSourceDir, 'SKILL.md')
-            if (fs.existsSync(subSourceSkill)) {
-              const subTargetDir = path.join(skillsBaseDir, subSkillName)
-              fs.mkdirSync(subTargetDir, { recursive: true })
-              fs.cpSync(subSourceDir, subTargetDir, { recursive: true, force: true })
-              installedSkills.push(subSkillName)
-              const subTargetSkill = path.join(subTargetDir, 'SKILL.md')
-              console.log(`   \x1b[32m✔ [指令技能]\x1b[0m ${subTargetSkill} (/${subSkillName})`)
-            }
-          }
-        }
-      }
+      installedSkills = syncSkillsDirectory(pkgRoot, skillsBaseDir)
     } catch (err) {
       console.error(`   \x1b[31m✖ 部署技能组失败:\x1b[0m`, err)
     }
@@ -583,26 +856,10 @@ export function runInstaller(rawArgs = [], options = {}) {
     console.log(`\n2. 正在配置 Antigravity MCP Server...`)
     for (const cfgFile of mcpConfigFiles) {
       try {
-        let mcpConfig = { mcpServers: {} }
-        if (fs.existsSync(cfgFile)) {
-          try {
-            const raw = fs.readFileSync(cfgFile, 'utf-8').trim()
-            if (raw) mcpConfig = JSON.parse(raw)
-          } catch {
-            // 重置
-          }
-        } else {
-          fs.mkdirSync(path.dirname(cfgFile), { recursive: true })
-        }
-
-        if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {}
-
-        mcpConfig.mcpServers['zhifangsi'] = {
+        upsertServerInJsonFile(cfgFile, 'mcpServers', 'zhifangsi', {
           command: nodePath,
           args: [mcpServerScript],
-        }
-
-        fs.writeFileSync(cfgFile, JSON.stringify(mcpConfig, null, 2), 'utf-8')
+        })
         console.log(`   \x1b[32m✔ MCP 配置已同步:\x1b[0m ${cfgFile}`)
       } catch (err) {
         console.error(`   \x1b[31m✖ 写入配置失败 (${cfgFile}):\x1b[0m`, err)
@@ -647,49 +904,128 @@ export function runInstaller(rawArgs = [], options = {}) {
     }
   }
 
-  // 4. 可选：为当前工作区注入 VS Code / Qoder / Cursor / Claude MCP 配置
-  if (wantVscode) {
-    const vscodeMcpFile = path.join(cwd, '.vscode', 'mcp.json')
-    fs.mkdirSync(path.dirname(vscodeMcpFile), { recursive: true })
-    let cfg = { servers: {} }
-    if (fs.existsSync(vscodeMcpFile)) {
-      try {
-        cfg = JSON.parse(fs.readFileSync(vscodeMcpFile, 'utf-8'))
-      } catch {}
+  // 3.8 VS Code Copilot 全局安装（Copilot Harness 标准 + 可选经典 User Profile 兼容）
+  if (wantCopilotGlobal) {
+    console.log(`\n[VS Code Copilot] 正在同步全局 Agent Skills、Custom Instructions 与 MCP 配置...`)
+    let copilotSkills = []
+    try {
+      copilotSkills = syncSkillsDirectory(pkgRoot, copilotSkillsDir)
+    } catch (err) {
+      console.error(`   \x1b[31m✖ 部署 Copilot Agent Skills 失败:\x1b[0m`, err)
     }
-    if (!cfg.servers) cfg.servers = {}
-    cfg.servers['zhifangsi'] = {
+
+    try {
+      fs.mkdirSync(path.dirname(copilotInstructionsFile), { recursive: true })
+      fs.writeFileSync(copilotInstructionsFile, COPILOT_INSTRUCTIONS_CONTENT, 'utf-8')
+      console.log(`   \x1b[32m✔ [全局指令]\x1b[0m ${copilotInstructionsFile}`)
+    } catch (err) {
+      console.error(`   \x1b[31m✖ 写入 Copilot 全局指令失败:\x1b[0m`, err)
+    }
+
+    try {
+      upsertServerInJsonFile(copilotMcpConfigFile, 'mcpServers', 'zhifangsi', {
+        type: 'local',
+        command: nodePath,
+        args: [mcpServerScript],
+        tools: ['*'],
+      })
+      console.log(`   \x1b[32m✔ [Copilot MCP]\x1b[0m ${copilotMcpConfigFile}`)
+    } catch (err) {
+      console.error(`   \x1b[31m✖ 写入 Copilot MCP 配置失败:\x1b[0m`, err)
+    }
+
+    const legacyProfileEnabled =
+      hasVscodeProfileFlag || Boolean(manifest.runtimes?.copilot?.legacyProfileEnabled)
+    if (legacyProfileEnabled) {
+      try {
+        upsertServerInJsonFile(vscodeUserMcpFile, 'servers', 'zhifangsi', {
+          type: 'stdio',
+          command: nodePath,
+          args: [mcpServerScript],
+        })
+        fs.mkdirSync(path.dirname(vscodeUserInstructionsFile), { recursive: true })
+        fs.writeFileSync(vscodeUserInstructionsFile, COPILOT_INSTRUCTIONS_CONTENT, 'utf-8')
+        console.log(`   \x1b[32m✔ [VS Code User Profile 兼容]\x1b[0m ${vscodeUserMcpFile}`)
+        console.log(`   \x1b[32m✔ [VS Code User Profile 指令]\x1b[0m ${vscodeUserInstructionsFile}`)
+      } catch (err) {
+        console.error(`   \x1b[31m✖ 写入经典 VS Code User Profile 配置失败:\x1b[0m`, err)
+      }
+    }
+
+    manifest.runtimes.copilot = {
+      version,
+      installed_at: nowIso,
+      source: pkgRoot,
+      runtime: 'copilot',
+      scope: 'global',
+      copilotHome,
+      skillsDir: copilotSkillsDir,
+      skills: copilotSkills,
+      instructionsFile: copilotInstructionsFile,
+      mcpConfigFile: copilotMcpConfigFile,
+      legacyProfileEnabled,
+      ...(legacyProfileEnabled
+        ? {
+            vscodeUserDir,
+            vscodeUserMcpFile,
+            vscodeUserInstructionsFile,
+          }
+        : {}),
+      mcp_tools: TOOL_DEFINITIONS.map((t) => t.name),
+    }
+    installedRuntimes.push('copilot')
+  }
+
+  // 4. 可选：为当前工作区注入 VS Code Copilot / Qoder / Cursor / Claude 配置
+  if (wantVscodeWorkspace) {
+    const vscodeMcpFile = path.join(cwd, '.vscode', 'mcp.json')
+    upsertServerInJsonFile(vscodeMcpFile, 'servers', 'zhifangsi', {
       type: 'stdio',
       command: nodePath,
       args: [mcpServerScript],
+    })
+    console.log(`\n   \x1b[32m✔ [VS Code 工作区 MCP]\x1b[0m 已注入 ${vscodeMcpFile}`)
+
+    // 若同时安装了全局 Copilot 且未显式传 --local，则跳过工作区 Skills/Instructions，避免 Copilot `/` 菜单重复
+    const writeWorkspaceCopilotAssets = !wantCopilotGlobal || hasLocal
+    let wsSkills = []
+    let wsInstructionsPath = undefined
+    const wsSkillsDir = path.join(cwd, '.github', 'skills')
+    const wsInstructionsFile = path.join(cwd, '.github', 'instructions', 'zhifangsi.instructions.md')
+
+    if (writeWorkspaceCopilotAssets) {
+      console.log(`   \x1b[36m▸ [VS Code 工作区 Copilot]\x1b[0m 正在注入项目级 Agent Skills 与 Custom Instructions...`)
+      wsSkills = syncSkillsDirectory(pkgRoot, wsSkillsDir)
+      fs.mkdirSync(path.dirname(wsInstructionsFile), { recursive: true })
+      fs.writeFileSync(wsInstructionsFile, COPILOT_INSTRUCTIONS_CONTENT, 'utf-8')
+      wsInstructionsPath = wsInstructionsFile
+      console.log(`   \x1b[32m✔ [VS Code 工作区指令]\x1b[0m ${wsInstructionsFile}`)
     }
-    fs.writeFileSync(vscodeMcpFile, JSON.stringify(cfg, null, 2), 'utf-8')
+
     const rec = {
       runtime: 'vscode',
       cwd,
       configFile: vscodeMcpFile,
+      ...(writeWorkspaceCopilotAssets
+        ? {
+            skillsDir: wsSkillsDir,
+            skills: wsSkills,
+            instructionsFile: wsInstructionsPath,
+          }
+        : {}),
       version,
       installed_at: nowIso,
     }
     upsertWorkspaceRecord(manifest, rec)
     installedWorkspaces.push(rec)
-    console.log(`\n   \x1b[32m✔ [VS Code]\x1b[0m 已注入 ${vscodeMcpFile}`)
   }
 
   if (wantQoder) {
     const qoderMcpFile = path.join(cwd, '.mcp.json')
-    let cfg = { mcpServers: {} }
-    if (fs.existsSync(qoderMcpFile)) {
-      try {
-        cfg = JSON.parse(fs.readFileSync(qoderMcpFile, 'utf-8'))
-      } catch {}
-    }
-    if (!cfg.mcpServers) cfg.mcpServers = {}
-    cfg.mcpServers['zhifangsi'] = {
+    upsertServerInJsonFile(qoderMcpFile, 'mcpServers', 'zhifangsi', {
       command: nodePath,
       args: [mcpServerScript],
-    }
-    fs.writeFileSync(qoderMcpFile, JSON.stringify(cfg, null, 2), 'utf-8')
+    })
     const rec = {
       runtime: qoderOrClaudeRuntime,
       cwd,
@@ -704,19 +1040,10 @@ export function runInstaller(rawArgs = [], options = {}) {
 
   if (wantCursor) {
     const cursorMcpFile = path.join(cwd, '.cursor', 'mcp.json')
-    fs.mkdirSync(path.dirname(cursorMcpFile), { recursive: true })
-    let cfg = { mcpServers: {} }
-    if (fs.existsSync(cursorMcpFile)) {
-      try {
-        cfg = JSON.parse(fs.readFileSync(cursorMcpFile, 'utf-8'))
-      } catch {}
-    }
-    if (!cfg.mcpServers) cfg.mcpServers = {}
-    cfg.mcpServers['zhifangsi'] = {
+    upsertServerInJsonFile(cursorMcpFile, 'mcpServers', 'zhifangsi', {
       command: nodePath,
       args: [mcpServerScript],
-    }
-    fs.writeFileSync(cursorMcpFile, JSON.stringify(cfg, null, 2), 'utf-8')
+    })
     const rec = {
       runtime: 'cursor',
       cwd,
@@ -735,17 +1062,38 @@ export function runInstaller(rawArgs = [], options = {}) {
   manifest.source = pkgRoot
   const manifestPath = saveInstallManifest(manifest, homeDir)
 
+  const summaryLines = []
+  if (installedRuntimes.includes('antigravity')) {
+    summaryLines.push(
+      `• \x1b[36mAntigravity (全局)\x1b[0m: 已注入 8 项 Skills、${TOOL_DEFINITIONS.length} 大懒加载 MCP 工具与 Schema。`
+    )
+  }
+  if (installedRuntimes.includes('copilot')) {
+    summaryLines.push(
+      `• \x1b[36mVS Code Copilot (全局)\x1b[0m: 已注入 Agent Skills (${copilotSkillsDir})、Custom Instructions 与 Copilot MCP (${copilotMcpConfigFile})；在 VS Code 中执行 \`Developer: Reload Window\` 后即可使用 \`/zhifangsi*\` 与 \`zhifangsi_*\` 工具。`
+    )
+    if (!manifest.runtimes.copilot?.legacyProfileEnabled) {
+      summaryLines.push(
+        `  \x1b[2m(若使用旧版 VS Code Local harness，可附加 --vscode-profile 同步至 Code/User/mcp.json)\x1b[0m`
+      )
+    }
+  }
+  for (const ws of installedWorkspaces) {
+    summaryLines.push(
+      `• \x1b[36m${ws.runtime} (工作区)\x1b[0m: ${ws.configFile}${ws.skillsDir ? ` + ${ws.skillsDir}` : ''}`
+    )
+  }
+
   console.log(`
 \x1b[32m========================================================\x1b[0m
 \x1b[32m✔ 职方司 (zhifangsi v${version}) 已成功完成安装与集成！\x1b[0m
 \x1b[32m========================================================\x1b[0m
 
 生效组件：
-1. \x1b[36mSkill 技能\x1b[0m: Antigravity 对话中自动具备职方司战略舆图思维；
-2. \x1b[36mMCP 军机工具\x1b[0m: 原生注入 ${TOOL_DEFINITIONS.length} 大懒加载工具 (zhifangsi_*)；
-3. \x1b[36mNode 绝对路径绑定\x1b[0m: ${nodePath} -> ${mcpServerScript}；
-4. \x1b[36m安装清单记录\x1b[0m: ${manifestPath}；
-5. \x1b[36m全局命令行\x1b[0m: 可在系统任何终端直接运行 \`zhifangsi map\` / \`zhifangsi check\` / \`zhifangsi update\` / \`zhifangsi impact\`。
+${summaryLines.join('\n')}
+• \x1b[36mNode 绝对路径绑定\x1b[0m: ${nodePath} -> ${mcpServerScript}
+• \x1b[36m安装清单记录\x1b[0m: ${manifestPath}
+• \x1b[36m全局命令行\x1b[0m: 可在系统任何终端直接运行 \`zhifangsi map\` / \`zhifangsi check\` / \`zhifangsi update\` / \`zhifangsi impact\`。
 `)
 
   return {
